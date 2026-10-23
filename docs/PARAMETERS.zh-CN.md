@@ -30,6 +30,8 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-o` | overscan 显示 | `Config::display.overscanned` |
 | `-h265` | 允许 HEVC 并提供 4K | `Config::features` 置第 42 位，且 `Config::display` 为 3840x2160；默认尺寸由程序决定 |
 | `-hls`（仅 feature 位） | 告知客户端支持 HLS | `Config::features` 置第 4 位；路由本身仍返回 `501` |
+| `-nohold` | 新客户端顶替当前连接 | `Config::nohold` |
+| `-reset n` | 无反馈超过 n 秒就关闭会话 | `Config::feedback_timeout` |
 | `-restrict` | 只允许名单中的设备 | `Config::client_policy.restrict` |
 | `-allow <deviceID>` | 允许的设备 | `Config::client_policy.allow` |
 | `-block <deviceID>` | 永远拒绝的设备 | `Config::client_policy.block` |
@@ -70,8 +72,6 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 
 | 上游参数 | 作用 | 计划中的接口 |
 | --- | --- | --- |
-| `-reset n` | 无反馈 n 秒后重置 | `Config::client_timeout` |
-| `-nohold` | 新客户端顶掉当前连接 | `Config::single_client` |
 | `-vsync`、`-async` | 时间戳同步模式 | `Config::sync` |
 | `-db`、`-taper` | 音量曲线 | `Config::volume_curve` |
 | `-ca`、`-md` | 封面图与元数据 | `Config` 上的回调 |

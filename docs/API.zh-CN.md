@@ -40,6 +40,12 @@ pub async fn run(config: Config) -> Result<(), Error>
 | `pace_video` | `bool` | 是否按采集间隔节流镜像视频。默认关闭：投屏看的是画面跟手的快慢 |
 | `audio_latency` | `Duration` | 客户端据此排程的音频延迟，在 `RECORD` 的 `Audio-Latency` 中报告；对应上游 `-al`，范围 0 到 10 秒 |
 | `initial_volume` | `Volume` | 客户端连接前设置给渲染器的电平；对应上游 `-vol` |
+| `features` | `Option<u64>` | 广播的 feature 位图；`None` 用默认值，第 42 位允许 HEVC，第 4 位宣称 HLS |
+| `display` | `server::Display` | 客户端从 `/info` 读到的尺寸、刷新率、帧率上限与 overscan；对应上游 `-s`、`-fps`、`-o` |
+| `client_policy` | `server::ClientPolicy` | 允许哪些客户端建立会话，在 `SETUP` 时判定；被拒绝的客户端收到 `403 Forbidden` |
+| `ports` | `media::ports::MediaPorts` | 四个媒体端口；`0` 表示由系统分配，`MediaPorts::legacy()` 是上游的固定布局 |
+| `nohold` | `bool` | 新客户端顶替当前连接，而不是被拒绝 |
+| `feedback_timeout` | `Option<Duration>` | 客户端停止发送 `/feedback` 后关闭会话；对应上游 `-reset` |
 
 `ClientCallback` 的类型是 `Arc<dyn Fn(&[u8; 32]) + Send + Sync>`。它在验证客户端的连接上执行，因此写文件的实现应当让工作量足够小，或者干脆交给另一个线程。
 

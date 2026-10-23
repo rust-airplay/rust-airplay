@@ -559,6 +559,16 @@ pub trait RouteHandler {
     /// a key or a signature, so a receiver can be debugged against a real client
     /// without printing secrets.
     fn trace(&mut self, _trace: &RequestTrace<'_>) {}
+
+    /// A clock the transport can watch to tell whether the client is still there.
+    ///
+    /// `GET`-style sessions are kept alive by `POST /feedback`, and a client that stops
+    /// sending it has gone away even though its socket has not. A handler that supports a
+    /// timeout returns the millisecond clock it updates on each feedback request; `None`
+    /// means this connection cannot be timed out from its feedback.
+    fn feedback_clock(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicU64>> {
+        None
+    }
 }
 
 /// One request and the answer it got, for diagnostics.

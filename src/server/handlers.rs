@@ -436,6 +436,11 @@ pub struct RouteHandlers {
     setup: Option<Box<dyn FnMut(SetupRequest) + Send>>,
     /// Which clients may start a session.
     client_policy: ClientPolicy,
+    /// When the last `POST /feedback` arrived, in milliseconds since the Unix epoch.
+    ///
+    /// A client that keeps a session alive by asking for feedback is a client that is
+    /// still there; the transport watches this clock to decide when a silent one has gone.
+    feedback_clock: std::sync::Arc<std::sync::atomic::AtomicU64>,
     parameter: Option<Box<dyn FnMut(SetParameter) + Send>>,
     trace: Option<TraceCallback>,
     authenticated: bool,
@@ -460,6 +465,7 @@ impl RouteHandlers {
             debug_setup: std::env::var("AIRPLAY_DEBUG_SETUP").is_ok(),
             setup: None,
             client_policy: ClientPolicy::default(),
+            feedback_clock: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_millis())),
             parameter: None,
             trace: None,
             authenticated: false,
@@ -573,6 +579,10 @@ impl RouteHandlers {
 }
 
 impl RouteHandler for RouteHandlers {
+    fn feedback_clock(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicU64>> {
+        Some(std::sync::Arc::clone(&self.feedback_clock))
+    }
+
     fn handle(&mut self, route: Route, request: &RouteRequest<'_>) -> Option<RouteReply> {
         match route {
             Route::Feedback => Some(self.feedback_reply()),
@@ -1001,6 +1011,8 @@ impl RouteHandlers {
     /// Port of `raop_handler_feedback`
     /// (`upstream/UxPlay/lib/raop_handlers.h:1204-1213`).
     fn feedback_reply(&mut self) -> RouteReply {
+        self.feedback_clock
+            .store(now_millis(), std::sync::atomic::Ordering::Relaxed);
         if let Some(callback) = self.feedback.as_mut() {
             callback();
         }
@@ -1114,6 +1126,14 @@ impl RouteHandlers {
             RouteReply::ok()
         }
     }
+}
+
+/// Milliseconds since the Unix epoch, for the feedback clock.
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// `qualifier` array of a `GET /info` request, first string entry

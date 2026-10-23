@@ -36,6 +36,8 @@ Three surfaces are involved:
 | `-o` | overscanned display | `Config::display.overscanned` |
 | `-h265` | allow HEVC and offer 4K | `Config::features` with bit 42 set, and `Config::display` at 3840x2160; the program decides the default size |
 | `-hls` (feature bit only) | tell clients HLS is supported | `Config::features` with bit 4 set; the routes themselves are still `501` |
+| `-nohold` | a new client takes over from the current one | `Config::nohold` |
+| `-reset n` | close a session with no feedback for n seconds | `Config::feedback_timeout` |
 | `-restrict` | admit only the devices in the allow list | `Config::client_policy.restrict` |
 | `-allow <deviceID>` | a device that is admitted | `Config::client_policy.allow` |
 | `-block <deviceID>` | a device that is never admitted | `Config::client_policy.block` |
@@ -80,8 +82,6 @@ see the shape before the code exists.
 
 | Upstream | What it does | Planned surface |
 | --- | --- | --- |
-| `-reset n` | reset after n seconds without feedback | `Config::client_timeout` |
-| `-nohold` | a new client replaces the current one | `Config::single_client` |
 | `-vsync`, `-async` | timestamp synchronisation modes | `Config::sync` |
 | `-db`, `-taper` | volume curve | `Config::volume_curve` |
 | `-ca`, `-md` | cover art and metadata | callbacks on `Config` |

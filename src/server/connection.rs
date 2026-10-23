@@ -32,12 +32,21 @@ pub(super) async fn serve<H: RouteHandler>(
     mut handlers: H,
     idle_timeout: Duration,
     audio_delay_micros: u32,
+    feedback_timeout: Option<Duration>,
 ) -> Result<()> {
     // Upstream leaves Nagle enabled on control connections; a control reply is
     // one small write, so the port disables it to avoid delaying each answer by
     // the TCP delayed-ack timer.
     socket.set_nodelay(true)?;
     let (mut reader, mut writer) = socket.into_split();
+    // Upstream closes a session whose client stopped asking for feedback
+    // (`uxplay.cpp:577-587`). The handler set records the last request; this loop is what
+    // acts on it, because a socket nobody reads is not a connection worth keeping open.
+    let feedback_clock = handlers.feedback_clock();
+    let feedback_deadline = feedback_timeout.map(|timeout| {
+        let clock = feedback_clock.clone();
+        (timeout, clock)
+    });
     let mut session = ControlSession::new();
     // Upstream reports the audio delay on `RECORD`, and a caller sets it with `-al`.
     session.set_audio_delay_micros(audio_delay_micros);
@@ -99,9 +108,27 @@ pub(super) async fn serve<H: RouteHandler>(
         if now >= deadline {
             return Ok(());
         }
-        match timeout(deadline - now, reader.read(&mut chunk)).await {
-            // Idle for too long: the connection is dropped, which closes it.
-            Err(_elapsed) => return Ok(()),
+        // A session kept alive by `/feedback` also expires by it: a client that stops
+        // asking has gone, even if its socket has not closed. Upstream checks the same
+        // limit and resets the session (`uxplay.cpp:577-587`). The read below is capped
+        // by whichever deadline is nearer, because a socket that stays silent would
+        // otherwise keep this loop asleep past the feedback timeout.
+        let mut wait = deadline - now;
+        if let Some((timeout, clock)) = &feedback_deadline
+            && let Some(clock) = clock
+        {
+            let quiet =
+                now_millis().saturating_sub(clock.load(std::sync::atomic::Ordering::Relaxed));
+            let limit = timeout.as_millis() as u64;
+            if quiet >= limit {
+                return Ok(());
+            }
+            wait = wait.min(Duration::from_millis((limit - quiet).max(1)));
+        }
+        match timeout(wait, reader.read(&mut chunk)).await {
+            // Either deadline has passed; the top of the loop decides which, and whether
+            // the connection is finished.
+            Err(_elapsed) => continue,
             Ok(Ok(0)) => return Ok(()),
             Ok(Ok(read)) => {
                 let start_of_request = buffer.is_empty();
@@ -113,6 +140,14 @@ pub(super) async fn serve<H: RouteHandler>(
             Ok(Err(error)) => return Err(error),
         }
     }
+}
+
+/// Milliseconds since the Unix epoch, for the feedback clock.
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Writes the rejection response for `error` and closes the connection.
@@ -196,6 +231,7 @@ mod tests {
                 RouteHandlers::new(DeviceIdentity::default()),
                 Duration::from_secs(5),
                 crate::control::DEFAULT_AUDIO_DELAY_MICROS,
+                None,
             )
             .await
         });
@@ -216,6 +252,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_session_without_feedback_is_closed_by_its_timeout() {
+        // Upstream's `-reset`: a client that stops asking for feedback has gone, even
+        // though its socket has not closed. A connection whose handler records feedback
+        // and then receives none must expire.
+        use std::time::Instant as StdInstant;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let timeout = Duration::from_millis(50);
+        let server = tokio::spawn(async move {
+            let (socket, peer) = listener.accept().await.unwrap();
+            serve(
+                socket,
+                peer,
+                RouteHandlers::new(DeviceIdentity::default()),
+                Duration::from_secs(30),
+                crate::control::DEFAULT_AUDIO_DELAY_MICROS,
+                Some(timeout),
+            )
+            .await
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        // A request that is not feedback does not refresh the clock.
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        client
+            .write_all(
+                b"OPTIONS * RTSP/1.0
+CSeq: 1
+
+",
+            )
+            .await
+            .unwrap();
+        let started = StdInstant::now();
+        let mut buffer = [0u8; 64];
+        let _ = client.read(&mut buffer).await;
+        // The answer arrives, then the connection closes; reading again returns end of
+        // stream once the timeout fires.
+        let closed = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let mut sink = [0u8; 64];
+                match client.read(&mut sink).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        })
+        .await;
+        assert!(
+            closed.is_ok(),
+            "the connection outlived its feedback timeout"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "closed after {:?}",
+            started.elapsed()
+        );
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn serve_closes_an_idle_connection() {
         use std::time::Instant as StdInstant;
         use tokio::net::TcpListener;
@@ -231,6 +330,7 @@ mod tests {
                 RouteHandlers::new(DeviceIdentity::default()),
                 idle_timeout,
                 crate::control::DEFAULT_AUDIO_DELAY_MICROS,
+                None,
             )
             .await
         });

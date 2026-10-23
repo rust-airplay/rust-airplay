@@ -45,6 +45,8 @@ let config = Config {
     features: None,
     client_policy: rust_airplay::server::ClientPolicy::default(),
     ports: rust_airplay::media::ports::MediaPorts::automatic(),
+    nohold: false,
+    feedback_timeout: None,
     display: rust_airplay::server::Display::default(),
 };
 

@@ -242,6 +242,17 @@ pub struct Config {
     /// from `Audio-Latency`: too small and every packet is late, too large and the stream
     /// starts late. The default is upstream's quarter of a second.
     pub audio_latency: std::time::Duration,
+    /// Whether a new client takes over from the current one.
+    ///
+    /// Upstream's `-nohold`. Off by default: this crate serves several connections at once,
+    /// which is more permissive than upstream, and the flag adds the takeover a person
+    /// switching phones expects.
+    pub nohold: bool,
+    /// How long a session may go without `/feedback` before it is closed.
+    ///
+    /// Upstream's `-reset`, which defaults to fifteen seconds there. `None` leaves a silent
+    /// client connected.
+    pub feedback_timeout: Option<std::time::Duration>,
     /// The ports the media session binds.
     ///
     /// Upstream's `-p n` and `-p`. The default lets the system choose every port and tells
@@ -572,6 +583,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
             .parse()
             .map_err(|error| format!("bind address: {error}"))?,
         audio_delay_micros,
+        nohold: config.nohold,
+        feedback_timeout: config.feedback_timeout,
         device: identity.clone(),
         ..ServerConfig::default()
     };

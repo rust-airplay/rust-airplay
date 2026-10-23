@@ -48,6 +48,12 @@ instead of a hidden default. The library reads no environment variable and opens
 | `pace_video` | `bool` | whether mirror video is held back to its capture spacing. Off by default: a mirror is judged by how quickly it follows the device |
 | `audio_latency` | `Duration` | the audio delay a client schedules against, reported in `Audio-Latency` on `RECORD`; upstream's `-al`, from 0 to 10 seconds |
 | `initial_volume` | `Volume` | the level the renderer is set to before a client connects; upstream's `-vol` |
+| `features` | `Option<u64>` | the advertised feature bitmap; `None` keeps the default, bit 42 allows HEVC and bit 4 claims HLS |
+| `display` | `server::Display` | the size, refresh rate, frame cap and overscan a client reads from `/info`; upstream's `-s`, `-fps` and `-o` |
+| `client_policy` | `server::ClientPolicy` | which clients may start a session, checked in `SETUP`; a refused client is answered `403 Forbidden` |
+| `ports` | `media::ports::MediaPorts` | the four media ports; `0` lets the system choose, and `MediaPorts::legacy()` is upstream's fixed layout |
+| `nohold` | `bool` | a new client takes over from the current one instead of being refused |
+| `feedback_timeout` | `Option<Duration>` | close a session whose client stopped sending `/feedback`; upstream's `-reset` |
 
 `ClientCallback` is `Arc<dyn Fn(&[u8; 32]) + Send + Sync>`. It runs on the connection that
 verified the client, so an implementation that writes a file should keep the work small or

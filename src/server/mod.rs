@@ -98,6 +98,20 @@ pub struct ServerConfig {
     pub max_connections: usize,
     /// How long a connection may stop making progress before it is closed.
     pub idle_timeout: Duration,
+    /// Whether a new client takes over from the current one.
+    ///
+    /// Upstream's `-nohold`. Off by default: a second client's connection is refused, as
+    /// upstream refuses it with `409 Conflict` when a session is already running
+    /// (`raop.c:271-289`). Turned on, a new connection drops the previous one, which is
+    /// what a person switching phones expects. This crate admits several connections at
+    /// once by default, so the flag only adds the takeover.
+    pub nohold: bool,
+    /// How long a session may go without a `/feedback` request before it is closed.
+    ///
+    /// Upstream's `-reset`, and its default is fifteen seconds (`uxplay.cpp:86`). `None`
+    /// leaves a silent client connected, which is what this crate did before the option
+    /// existed.
+    pub feedback_timeout: Option<Duration>,
     /// Audio delay reported to a client by `RECORD`, in microseconds.
     ///
     /// This is upstream's `-al`: the value the client sees in `Audio-Latency` and
@@ -117,6 +131,8 @@ impl Default for ServerConfig {
             bind: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
             max_connections: MAX_CONNECTIONS,
             idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            nohold: false,
+            feedback_timeout: None,
             audio_delay_micros: crate::control::DEFAULT_AUDIO_DELAY_MICROS,
             device: DeviceIdentity::default(),
         }
@@ -205,6 +221,11 @@ impl Server {
     {
         let idle_timeout = self.config.idle_timeout;
         let audio_delay_micros = self.config.audio_delay_micros;
+        let nohold = self.config.nohold;
+        let feedback_timeout = self.config.feedback_timeout;
+        // Every connection still being served, so `nohold` can stop the previous one.
+        let live: Arc<std::sync::Mutex<Vec<tokio::task::AbortHandle>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
         loop {
             // Taking a slot before accepting is what keeps the connection count
             // bounded: with every slot in use, the listener is not polled and a
@@ -220,12 +241,29 @@ impl Server {
                 Err(error) => return Err(error),
             };
             let handlers = new_handlers();
-            tokio::spawn(async move {
+            let task = tokio::spawn(async move {
                 let _slot = slot;
                 // Upstream logs this failure and drops the connection.
-                let _ = connection::serve(socket, peer, handlers, idle_timeout, audio_delay_micros)
-                    .await;
+                let _ = connection::serve(
+                    socket,
+                    peer,
+                    handlers,
+                    idle_timeout,
+                    audio_delay_micros,
+                    feedback_timeout,
+                )
+                .await;
             });
+            let mut live = live
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if nohold {
+                for previous in live.drain(..) {
+                    previous.abort();
+                }
+            }
+            live.retain(|handle| !handle.is_finished());
+            live.push(task.abort_handle());
         }
     }
 }
@@ -253,6 +291,46 @@ mod tests {
         };
         let error = Server::bind(config).await.err().unwrap();
         assert_eq!(error.kind(), ErrorKind::InvalidInput);
+    }
+
+    #[tokio::test]
+    async fn a_nohold_server_drops_the_previous_client() {
+        // Upstream's `-nohold`: a new connection takes the session rather than being
+        // refused. The first client's socket closing is what a takeover looks like from
+        // its side.
+        let config = ServerConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            nohold: true,
+            ..ServerConfig::default()
+        };
+        let server = Server::bind(config).await.unwrap();
+        let address = server.local_addr().unwrap();
+        let accepting = tokio::spawn(server.run(|| RouteHandlers::new(DeviceIdentity::default())));
+
+        let mut first = tokio::net::TcpStream::connect(address).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut second = tokio::net::TcpStream::connect(address).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // The first connection is gone: a read returns end of stream, or an error.
+        use tokio::io::AsyncReadExt;
+        let mut byte = [0u8; 1];
+        assert!(
+            matches!(first.read(&mut byte).await, Ok(0) | Err(_)),
+            "the previous client should have been dropped"
+        );
+        // And the new one is still served: it can ask a question.
+        use tokio::io::AsyncWriteExt;
+        second
+            .write_all(
+                b"OPTIONS * RTSP/1.0
+CSeq: 1
+
+",
+            )
+            .await
+            .unwrap();
+        accepting.abort();
     }
 
     #[tokio::test]
