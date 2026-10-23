@@ -78,8 +78,8 @@ this crate:
 
 | Upstream | What it does | Where |
 | --- | --- | --- |
-| `-key [fn]`, `-reg [fn]` | where the seed and the client list are stored | the program decides; `parlor-cli` keeps both under the user's application data directory |
-| `-d` | log level and format | the program's logger |
+| `-key [fn]`, `-reg [fn]` | where the seed and the client list are stored | the program decides; `parlor-cli` keeps both under the user's application data directory and its `-key`/`-reg` move them |
+| `-d` | log level and format | the program's logger; `parlor-cli` turns it into a debug level |
 
 ## Where this leaves the table
 
