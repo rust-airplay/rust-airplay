@@ -123,6 +123,28 @@ fn the_default_display_is_upstreams() {
 }
 
 #[test]
+fn the_advertised_features_are_the_identitys() {
+    // Bit 42 is what allows HEVC video, and it is the bit upstream's `-h265` sets. A
+    // caller that turns it on has to see it in every place a client reads features.
+    let mut identity = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Test", Vec::new());
+    identity.features |= 1 << 42;
+    let handlers = RouteHandlers::new(identity.clone());
+    let (head, body) = parse(
+        "GET /info",
+        "CSeq: 1
+",
+        &[],
+    );
+    let reply = info_reply(&handlers, &head, &body);
+    let parsed = Plist::parse(&reply.body).unwrap();
+    assert_eq!(
+        parsed.get_unsigned("features").unwrap(),
+        DEFAULT_FEATURES | (1 << 42)
+    );
+    assert_eq!(identity.features, DEFAULT_FEATURES | (1 << 42));
+}
+
+#[test]
 fn info_answers_only_the_requested_txt_record() {
     let mut identity = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Test", Vec::new());
     identity.txt_airplay = Some(b"txt".to_vec());

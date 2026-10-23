@@ -242,6 +242,14 @@ pub struct Config {
     /// from `Audio-Latency`: too small and every packet is late, too large and the stream
     /// starts late. The default is upstream's quarter of a second.
     pub audio_latency: std::time::Duration,
+    /// The feature bitmap advertised, when the caller has one of its own.
+    ///
+    /// `None` advertises [`crate::server::DEFAULT_FEATURES`], which is what upstream's
+    /// build starts from. A bit decides what a client believes the receiver can do: bit 42
+    /// is the one that allows HEVC video, bits 4 and 5 are HLS and slideshow, and bit 27
+    /// picks the pairing protocol. Upstream's `-h265` is this bitmap with bit 42 set, and
+    /// `-hls` is bit 4.
+    pub features: Option<u64>,
     /// The display a client is offered in `GET /info`.
     ///
     /// Upstream's `-s wxh@r`, `-fps` and `-o` together. A client reads the size, the
@@ -516,6 +524,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let public_key = state.identity_public();
 
     let identity = DeviceIdentity {
+        features: config.features.unwrap_or(crate::server::DEFAULT_FEATURES),
         width: config.display.width,
         height: config.display.height,
         refresh_rate: config.display.refresh_rate,

@@ -26,6 +26,8 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-s wxh@r` | 提供给客户端的显示尺寸、刷新率与帧率上限 | `Config::display` |
 | `-fps n` | 要求客户端的最高帧率 | `Config::display.max_fps` |
 | `-o` | overscan 显示 | `Config::display.overscanned` |
+| `-h265` | 允许 HEVC 并提供 4K | `Config::features` 置第 42 位，且 `Config::display` 为 3840x2160；默认尺寸由程序决定 |
+| `-hls`（仅 feature 位） | 告知客户端支持 HLS | `Config::features` 置第 4 位；路由本身仍返回 `501` |
 | `-vol <v>` | 会话起始音量 | `Config::initial_volume` |
 | `-as ...` | 音频 sink | 后端的 `Options::audio_sink` |
 | `-vs ...` | 视频 sink | 后端的 `Options::video_sink` |
@@ -63,7 +65,6 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 
 | 上游参数 | 作用 | 计划中的接口 |
 | --- | --- | --- |
-| `-h265` | 请求 HEVC 与 4K | `Config::video_codec`（feature 位与流的编码） |
 | `-reset n` | 无反馈 n 秒后重置 | `Config::client_timeout` |
 | `-nohold` | 新客户端顶掉当前连接 | `Config::single_client` |
 | `-restrict`、`-allow`、`-block` | 客户端白/黑名单 | `Config::client_policy` |
@@ -74,7 +75,7 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-FPSdata` | 显示客户端的流报告 | `Config::trace_log` 已包含这些；类型化回调是计划 |
 | `-p`（无值） | 传统固定端口布局 | `Config::ports` |
 | `-mp4 [fn]` | 录制会话 | 媒体路径支持之前不计划 |
-| `-hls`、`-lang`、`-slang`、`-custom`、`-rpi` | HTTP Live Streaming | HLS 存在之前不计划 |
+| `-lang`、`-slang`、`-custom`、`-rpi` | HTTP Live Streaming 调优 | HLS 存在之前不计划 |
 | `-p2p` | 点对点发现 | 不计划；`mdns-sd` 没有点对点模式 |
 | `-scrsv` | 屏保策略 | 程序策略 |
 

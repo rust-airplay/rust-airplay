@@ -32,6 +32,8 @@ Three surfaces are involved:
 | `-s wxh@r` | the display size, refresh rate and frame cap a client is offered | `Config::display` |
 | `-fps n` | the highest frame rate asked of the client | `Config::display.max_fps` |
 | `-o` | overscanned display | `Config::display.overscanned` |
+| `-h265` | allow HEVC and offer 4K | `Config::features` with bit 42 set, and `Config::display` at 3840x2160; the program decides the default size |
+| `-hls` (feature bit only) | tell clients HLS is supported | `Config::features` with bit 4 set; the routes themselves are still `501` |
 | `-vol <v>` | the volume a session starts at | `Config::initial_volume` |
 | `-as ...` | the audio sink | `Options::audio_sink` in the backend |
 | `-vs ...` | the video sink | `Options::video_sink` |
@@ -73,7 +75,6 @@ see the shape before the code exists.
 
 | Upstream | What it does | Planned surface |
 | --- | --- | --- |
-| `-h265` | request HEVC and 4K | `Config::video_codec` (feature bits and the stream's coding) |
 | `-reset n` | reset after n seconds without feedback | `Config::client_timeout` |
 | `-nohold` | a new client replaces the current one | `Config::single_client` |
 | `-restrict`, `-allow`, `-block` | client allow and block lists | `Config::client_policy` |
@@ -84,7 +85,7 @@ see the shape before the code exists.
 | `-FPSdata` | show the client's streaming reports | `Config::trace_log` already carries them; a typed callback is planned |
 | `-p` (no value) | the legacy fixed port layout | `Config::ports` |
 | `-mp4 [fn]` | record the session | not planned until the media path supports it |
-| `-hls`, `-lang`, `-slang`, `-custom`, `-rpi` | HTTP Live Streaming | not planned until HLS exists |
+| `-lang`, `-slang`, `-custom`, `-rpi` | HTTP Live Streaming tuning | not planned until HLS exists |
 | `-p2p` | peer-to-peer discovery | not planned; `mdns-sd` has no peer-to-peer mode |
 | `-scrsv` | screensaver policy | client policy |
 
