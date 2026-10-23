@@ -574,6 +574,16 @@ fn describe_report(payload: &[u8]) -> String {
     }
 }
 
+/// The gain a client's decibels mean under `curve`.
+///
+/// The two scales meet here: a client states decibels (with `-144` for mute) and a renderer
+/// plays at a linear gain. Keeping it in one function is what lets the conversion be tested
+/// without a sound card.
+fn client_gain(db: f32, curve: crate::VolumeCurve) -> f64 {
+    let fraction = crate::airplay_db_to_fraction(f64::from(db));
+    curve.gain(fraction)
+}
+
 /// The decibels a slider position means under `curve`.
 fn airplay_volume(fraction: f64, curve: crate::VolumeCurve) -> f64 {
     curve.db_for_fraction(fraction)
@@ -1667,11 +1677,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     if let crate::server::SetParameter::Volume(db) = parameter {
                         // The client sends decibels: -30 is silence, 0 is full, and -144
                         // is its mute signal.
-                        let fraction = crate::airplay_db_to_fraction(f64::from(db));
-                        let gain = volume_curve.gain(fraction);
+                        let gain = client_gain(db, volume_curve);
                         log::info!(
-                            "media     the client set the volume to {db:.1} dB ({:.0}%)",
-                            fraction * 100.0
+                            "media     the client set the volume to {db:.1} dB (gain {gain:.3})"
                         );
                         if let Err(error) = renderer.set_volume(crate::Volume::new(gain)) {
                             log::warn!("rust-airplay: the renderer refused a volume: {error}");
@@ -1926,6 +1934,22 @@ mod tests {
             crate::render::VideoCodec::H264,
             None,
         )
+    }
+
+    #[test]
+    fn a_client_s_decibels_become_the_gain_a_renderer_plays_at() {
+        // The path from `SET_PARAMETER volume` to `Renderer::set_volume`: what a client
+        // sends is decibels, and what a sound card takes is a linear gain.
+        use super::client_gain;
+        use crate::VolumeCurve;
+        let flat = VolumeCurve::default();
+        assert!((client_gain(0.0, flat) - 1.0).abs() < 1e-12);
+        assert_eq!(client_gain(-30.0, flat), 0.0);
+        assert_eq!(client_gain(-144.0, flat), 0.0);
+        // Half the slider is -15 dB, about 0.178 of the amplitude.
+        assert!((client_gain(-15.0, flat) - 10f64.powf(-0.75)).abs() < 1e-12);
+        // A value above full is full, not silence.
+        assert!((client_gain(5.0, flat) - 1.0).abs() < 1e-12);
     }
 
     #[test]
