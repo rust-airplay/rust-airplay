@@ -242,6 +242,13 @@ pub struct Config {
     /// from `Audio-Latency`: too small and every packet is late, too large and the stream
     /// starts late. The default is upstream's quarter of a second.
     pub audio_latency: std::time::Duration,
+    /// The ports the media session binds.
+    ///
+    /// Upstream's `-p n` and `-p`. The default lets the system choose every port and tells
+    /// the client what it got in `SETUP`, which is what a receiver discovered over mDNS
+    /// does not need anything else for. A fixed layout is for a firewall or a port forward,
+    /// and [`crate::media::ports::MediaPorts::legacy`] is upstream's own.
+    pub ports: crate::media::ports::MediaPorts,
     /// Which clients may start a session.
     ///
     /// Upstream's `-restrict`, `-allow` and `-block`. The policy is checked in `SETUP`,
@@ -645,9 +652,12 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // `SETUP` names are ports that already answer. The receive loop waits for the
     // first `SETUP` that carries a key, because until then there is nothing to
     // decrypt with.
-    let media = crate::media::ports::MediaSockets::bind("0.0.0.0:0".parse().expect("bind address"))
-        .await
-        .map_err(|error| format!("cannot bind the media ports: {error}"))?;
+    let media = crate::media::ports::MediaSockets::bind_ports(
+        "0.0.0.0:0".parse().expect("bind address"),
+        config.ports,
+    )
+    .await
+    .map_err(|error| format!("cannot bind the media ports: {error}"))?;
     let setup_ports = SetupPorts {
         timing_port: Some(
             media

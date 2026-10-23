@@ -45,6 +45,47 @@ pub struct MediaSockets {
     mirror: TcpListener,
 }
 
+/// The ports a media session binds, with `0` meaning "the system picks".
+///
+/// Upstream's `-p n` and `-p` are this: a fixed layout is easier to firewall and easier to
+/// forward, and ephemeral ports are the default because two receivers on one machine must
+/// not fight over them. The mapping is upstream's (`raop.c:784-793`): its `udp[0..2]` are
+/// timing, control and data, and its `tcp[0]` is the mirror listener.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MediaPorts {
+    /// UDP timing port.
+    pub timing: u16,
+    /// UDP control port, where resends arrive.
+    pub control: u16,
+    /// UDP data port, where audio arrives.
+    pub data: u16,
+    /// TCP listener the mirror stream connects to.
+    pub mirror: u16,
+}
+
+impl MediaPorts {
+    /// Every port chosen by the system, which is the default.
+    #[must_use]
+    pub fn automatic() -> Self {
+        Self::default()
+    }
+
+    /// Upstream's `-p` without a value: the layout an old client expects.
+    ///
+    /// Upstream binds UDP 7011 timing, 6001 control and 6000 data, and TCP 7100 for the
+    /// mirror stream (`uxplay.cpp:1693-1694`). Its control port, 7000, is this crate's
+    /// [`crate::Config::port`] rather than one of these.
+    #[must_use]
+    pub fn legacy() -> Self {
+        Self {
+            timing: 7011,
+            control: 6001,
+            data: 6000,
+            mirror: 7100,
+        }
+    }
+}
+
 impl MediaSockets {
     /// Binds the three sockets on `bind`, letting the system pick the ports.
     ///
@@ -52,11 +93,23 @@ impl MediaSockets {
     ///
     /// Returns the underlying error when a socket cannot be bound.
     pub async fn bind(bind: SocketAddr) -> std::io::Result<Self> {
+        Self::bind_ports(bind, MediaPorts::automatic()).await
+    }
+
+    /// Binds the sockets on `bind`, on the ports `ports` names, with `0` meaning "pick".
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying error when a port cannot be bound, which for a fixed port
+    /// means it is in use or reserved - the reason a caller asked for one is usually the
+    /// reason it is not free.
+    pub async fn bind_ports(bind: SocketAddr, ports: MediaPorts) -> std::io::Result<Self> {
+        let with = |port: u16| SocketAddr::new(bind.ip(), port);
         Ok(Self {
-            timing: UdpSocket::bind(bind).await?,
-            control: UdpSocket::bind(bind).await?,
-            data: UdpSocket::bind(bind).await?,
-            mirror: TcpListener::bind(bind).await?,
+            timing: UdpSocket::bind(with(ports.timing)).await?,
+            control: UdpSocket::bind(with(ports.control)).await?,
+            data: UdpSocket::bind(with(ports.data)).await?,
+            mirror: TcpListener::bind(with(ports.mirror)).await?,
         })
     }
 
@@ -629,6 +682,28 @@ mod tests {
         bytes.resize(HEADER_LEN, 0);
         bytes.extend_from_slice(payload);
         bytes
+    }
+
+    #[tokio::test]
+    async fn an_explicit_port_is_the_port_that_answers() {
+        // Pick a free port by asking for one, releasing it, and asking for it by number.
+        // The window between the two is a race in theory and not in this test: the kernel
+        // hands out the next ephemeral port rather than the one just released.
+        let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("probe");
+        let port = probe.local_addr().expect("address").port();
+        drop(probe);
+        let sockets = MediaSockets::bind_ports(
+            "127.0.0.1:0".parse().expect("address"),
+            MediaPorts {
+                mirror: port,
+                ..MediaPorts::automatic()
+            },
+        )
+        .await
+        .expect("bind");
+        assert_eq!(sockets.mirror_port().expect("port"), port);
     }
 
     #[tokio::test]

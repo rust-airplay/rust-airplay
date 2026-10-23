@@ -28,6 +28,8 @@ Three surfaces are involved:
 | `-key [fn]` | the private key, and its file | `Config::seed`; storing it is the program's job |
 | `-reg [fn]` | the register of clients already paired | `Config::clients` and `Config::on_client` |
 | `-p n` | the control port | `Config::port` |
+| `-p` (no value) | upstream's fixed media port layout | `Config::ports` set to `MediaPorts::legacy()` |
+| `-p` with explicit ports | fixed timing, control, data and mirror ports | `Config::ports` |
 | `-al x` | audio delay reported to the client | `Config::audio_latency` |
 | `-s wxh@r` | the display size, refresh rate and frame cap a client is offered | `Config::display` |
 | `-fps n` | the highest frame rate asked of the client | `Config::display.max_fps` |
@@ -85,7 +87,6 @@ see the shape before the code exists.
 | `-ca`, `-md` | cover art and metadata | callbacks on `Config` |
 | `-dacp [fn]` | export remote-control information | a callback on `Config` |
 | `-FPSdata` | show the client's streaming reports | `Config::trace_log` already carries them; a typed callback is planned |
-| `-p` (no value) | the legacy fixed port layout | `Config::ports` |
 | `-mp4 [fn]` | record the session | not planned until the media path supports it |
 | `-lang`, `-slang`, `-custom`, `-rpi` | HTTP Live Streaming tuning | not planned until HLS exists |
 | `-p2p` | peer-to-peer discovery | not planned; `mdns-sd` has no peer-to-peer mode |

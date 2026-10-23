@@ -22,6 +22,8 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-key [fn]` | 私钥及其文件 | `Config::seed`；保存它是程序的职责 |
 | `-reg [fn]` | 已配对客户端的名单 | `Config::clients` 与 `Config::on_client` |
 | `-p n` | 控制端口 | `Config::port` |
+| `-p`（无值） | 上游的固定媒体端口布局 | `Config::ports` 设为 `MediaPorts::legacy()` |
+| `-p` 后跟显式端口 | 固定的 timing、control、data、mirror 端口 | `Config::ports` |
 | `-al x` | 报告给客户端的音频延迟 | `Config::audio_latency` |
 | `-s wxh@r` | 提供给客户端的显示尺寸、刷新率与帧率上限 | `Config::display` |
 | `-fps n` | 要求客户端的最高帧率 | `Config::display.max_fps` |
@@ -75,7 +77,6 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-ca`、`-md` | 封面图与元数据 | `Config` 上的回调 |
 | `-dacp [fn]` | 导出遥控信息 | `Config` 上的回调 |
 | `-FPSdata` | 显示客户端的流报告 | `Config::trace_log` 已包含这些；类型化回调是计划 |
-| `-p`（无值） | 传统固定端口布局 | `Config::ports` |
 | `-mp4 [fn]` | 录制会话 | 媒体路径支持之前不计划 |
 | `-lang`、`-slang`、`-custom`、`-rpi` | HTTP Live Streaming 调优 | HLS 存在之前不计划 |
 | `-p2p` | 点对点发现 | 不计划；`mdns-sd` 没有点对点模式 |

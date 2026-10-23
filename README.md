@@ -50,6 +50,7 @@ let config = Config {
     initial_volume: rust_airplay::Volume::FULL,
     features: None,
     client_policy: rust_airplay::server::ClientPolicy::default(),
+    ports: rust_airplay::media::ports::MediaPorts::automatic(),
     display: rust_airplay::server::Display::default(),
 };
 
