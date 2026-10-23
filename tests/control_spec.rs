@@ -2,7 +2,7 @@
 //! Upstream control-plane specification.
 //!
 //! These tables pin the observable control-plane contract to
-//! `upstream/UxPlay@57ea83411d5f7e0b38c5841987439340543f025c`:
+//! `upstream/UxPlay@517cbb1240d9b9f69330c55b957cdd52b4175b2a`:
 //!
 //! - route selection: `upstream/UxPlay/lib/raop.c:406-478`, plus the HLS rule at
 //!   `upstream/UxPlay/lib/raop.c:270` and the BLE beacon rule at

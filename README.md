@@ -46,6 +46,8 @@ let config = Config {
     dump_video: None,
     dump_audio: None,
     pace_video: false,
+    audio_latency: std::time::Duration::from_millis(250),
+    initial_volume: rust_airplay::Volume::FULL,
 };
 
 rust_airplay::run(config).await?;
@@ -76,6 +78,7 @@ wants to show it prominently should install a logger that does.
 ## Documentation
 
 - [docs/API.md](docs/API.md) and [API.zh-CN.md](docs/API.zh-CN.md): configuration, the renderer traits, the modules
+- [docs/PARAMETERS.md](docs/PARAMETERS.md) and [PARAMETERS.zh-CN.md](docs/PARAMETERS.zh-CN.md): every UxPlay command-line option, and where it lives here
 - [docs/BUILD.md](docs/BUILD.md) and [BUILD.zh-CN.md](docs/BUILD.zh-CN.md): the toolchain and the gates
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md): the crates and the path a session takes
 - [MIGRATION.md](MIGRATION.md): how this repository came out of a single workspace

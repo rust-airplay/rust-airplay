@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 /// Commit the port targets, recorded in `docs/MIGRATION_PLAN.md`.
-const PINNED: &str = "57ea83411d5f7e0b38c5841987439340543f025c";
+const PINNED: &str = "517cbb1240d9b9f69330c55b957cdd52b4175b2a";
 
 /// Commit of the upstream difference check, recorded in section 0 of the plan.
 const DIFFERENCE_BASELINE: &str = "3dbf7ceee65932154e85a2f83963d53520a799fa";

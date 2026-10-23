@@ -4,7 +4,7 @@
 
 ## 构建
 
-需要 `upstream/UxPlay` 下提交 `57ea83411d5f7e0b38c5841987439340543f025c` 的检出，以及 MSYS2 UCRT64：
+需要 `upstream/UxPlay` 下提交 `517cbb1240d9b9f69330c55b957cdd52b4175b2a` 的检出，以及 MSYS2 UCRT64：
 
 ```powershell
 pwsh -File tools/oracle/build.ps1

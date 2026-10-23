@@ -30,7 +30,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 
 有一组测试把本实现与 UxPlay 自身的 C 代码对比：镜像密钥流、计数器、音频解密、配对向量与 FairPlay 变换。它默认被忽略，因为需要 UxPlay 的检出以及编译它的编译器。
 
-需要 `upstream/UxPlay` 下提交 `57ea83411d5f7e0b38c5841987439340543f025c` 的检出，以及 MSYS2 UCRT64，然后：
+需要 `upstream/UxPlay` 下提交 `517cbb1240d9b9f69330c55b957cdd52b4175b2a` 的检出，以及 MSYS2 UCRT64，然后：
 
 ```sh
 pwsh -File tools/oracle/run.ps1

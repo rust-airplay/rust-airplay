@@ -74,7 +74,7 @@ should say which device it was verified on.
 
 ## Working from upstream
 
-`upstream/UxPlay` is a checkout at commit `57ea83411d5f7e0b38c5841987439340543f025c`. It is
+`upstream/UxPlay` is a checkout at commit `517cbb1240d9b9f69330c55b957cdd52b4175b2a`. It is
 not vendored and must not be edited.
 
 When porting behaviour from it, read the source rather than the header defaults: a constant in

@@ -37,7 +37,7 @@ One suite compares this implementation with UxPlay's own C code: the mirror keys
 counter, the audio decryption, the pairing vectors and the FairPlay transforms. It is ignored
 by default because it needs a checkout of UxPlay and a compiler for it.
 
-It needs a checkout at commit `57ea83411d5f7e0b38c5841987439340543f025c` in `upstream/UxPlay`
+It needs a checkout at commit `517cbb1240d9b9f69330c55b957cdd52b4175b2a` in `upstream/UxPlay`
 and MSYS2 UCRT64, and then:
 
 ```sh

@@ -46,6 +46,8 @@ instead of a hidden default. The library reads no environment variable and opens
 | `dump_video` | `Option<PathBuf>` | when set, the first video frames are appended here as Annex-B |
 | `dump_audio` | `Option<PathBuf>` | when set, audio payloads are appended here behind a length |
 | `pace_video` | `bool` | whether mirror video is held back to its capture spacing. Off by default: a mirror is judged by how quickly it follows the device |
+| `audio_latency` | `Duration` | the audio delay a client schedules against, reported in `Audio-Latency` on `RECORD`; upstream's `-al`, from 0 to 10 seconds |
+| `initial_volume` | `Volume` | the level the renderer is set to before a client connects; upstream's `-vol` |
 
 `ClientCallback` is `Arc<dyn Fn(&[u8; 32]) + Send + Sync>`. It runs on the connection that
 verified the client, so an implementation that writes a file should keep the work small or

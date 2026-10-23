@@ -38,6 +38,8 @@ pub async fn run(config: Config) -> Result<(), Error>
 | `dump_video` | `Option<PathBuf>` | 设置后把最早的视频帧以 Annex-B 追加到该文件 |
 | `dump_audio` | `Option<PathBuf>` | 设置后把音频负载带长度前缀追加到该文件 |
 | `pace_video` | `bool` | 是否按采集间隔节流镜像视频。默认关闭：投屏看的是画面跟手的快慢 |
+| `audio_latency` | `Duration` | 客户端据此排程的音频延迟，在 `RECORD` 的 `Audio-Latency` 中报告；对应上游 `-al`，范围 0 到 10 秒 |
+| `initial_volume` | `Volume` | 客户端连接前设置给渲染器的电平；对应上游 `-vol` |
 
 `ClientCallback` 的类型是 `Arc<dyn Fn(&[u8; 32]) + Send + Sync>`。它在验证客户端的连接上执行，因此写文件的实现应当让工作量足够小，或者干脆交给另一个线程。
 

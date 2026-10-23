@@ -31,6 +31,7 @@ pub(super) async fn serve<H: RouteHandler>(
     peer: std::net::SocketAddr,
     mut handlers: H,
     idle_timeout: Duration,
+    audio_delay_micros: u32,
 ) -> Result<()> {
     // Upstream leaves Nagle enabled on control connections; a control reply is
     // one small write, so the port disables it to avoid delaying each answer by
@@ -38,6 +39,8 @@ pub(super) async fn serve<H: RouteHandler>(
     socket.set_nodelay(true)?;
     let (mut reader, mut writer) = socket.into_split();
     let mut session = ControlSession::new();
+    // Upstream reports the audio delay on `RECORD`, and a caller sets it with `-al`.
+    session.set_audio_delay_micros(audio_delay_micros);
     // A `SETUP` on this connection needs to know where to send the clock exchange,
     // which is the address the connection came from (`raop_ntp.c:617-618`).
     session.set_peer(peer);
@@ -192,6 +195,7 @@ mod tests {
                 peer,
                 RouteHandlers::new(DeviceIdentity::default()),
                 Duration::from_secs(5),
+                crate::control::DEFAULT_AUDIO_DELAY_MICROS,
             )
             .await
         });
@@ -226,6 +230,7 @@ mod tests {
                 peer,
                 RouteHandlers::new(DeviceIdentity::default()),
                 idle_timeout,
+                crate::control::DEFAULT_AUDIO_DELAY_MICROS,
             )
             .await
         });

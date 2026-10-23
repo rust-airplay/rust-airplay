@@ -40,6 +40,8 @@ let config = Config {
     dump_video: None,
     dump_audio: None,
     pace_video: false,
+    audio_latency: std::time::Duration::from_millis(250),
+    initial_volume: rust_airplay::Volume::FULL,
 };
 
 rust_airplay::run(config).await?;
@@ -60,6 +62,7 @@ rust_airplay::run(config).await?;
 ## 文档
 
 - [docs/API.zh-CN.md](docs/API.zh-CN.md)：配置、渲染 trait、模块
+- [docs/PARAMETERS.zh-CN.md](docs/PARAMETERS.zh-CN.md)：上游每一个命令行参数，在本项目中的对应位置
 - [docs/BUILD.zh-CN.md](docs/BUILD.zh-CN.md)：工具链与门禁
 - [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md)：crate 划分与会话路径
 - [MIGRATION.md](MIGRATION.md)：本仓库是如何从单一工作区拆出来的

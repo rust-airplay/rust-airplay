@@ -5,7 +5,7 @@ implementation can be compared with the code it follows instead of with a descri
 
 ## Building it
 
-It needs a UxPlay checkout at commit `57ea83411d5f7e0b38c5841987439340543f025c` in
+It needs a UxPlay checkout at commit `517cbb1240d9b9f69330c55b957cdd52b4175b2a` in
 `upstream/UxPlay`, and MSYS2 UCRT64:
 
 ```powershell

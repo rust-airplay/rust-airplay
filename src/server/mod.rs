@@ -98,6 +98,12 @@ pub struct ServerConfig {
     pub max_connections: usize,
     /// How long a connection may stop making progress before it is closed.
     pub idle_timeout: Duration,
+    /// Audio delay reported to a client by `RECORD`, in microseconds.
+    ///
+    /// This is upstream's `-al`: the value the client sees in `Audio-Latency` and
+    /// schedules its own playback against. Zero is legal and means "play as soon as
+    /// it arrives"; the range is checked when it is set.
+    pub audio_delay_micros: u32,
     /// Identity the handlers advertise to clients.
     pub device: DeviceIdentity,
 }
@@ -111,6 +117,7 @@ impl Default for ServerConfig {
             bind: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
             max_connections: MAX_CONNECTIONS,
             idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            audio_delay_micros: crate::control::DEFAULT_AUDIO_DELAY_MICROS,
             device: DeviceIdentity::default(),
         }
     }
@@ -197,6 +204,7 @@ impl Server {
         H: RouteHandler + Send + 'static,
     {
         let idle_timeout = self.config.idle_timeout;
+        let audio_delay_micros = self.config.audio_delay_micros;
         loop {
             // Taking a slot before accepting is what keeps the connection count
             // bounded: with every slot in use, the listener is not polled and a
@@ -215,7 +223,8 @@ impl Server {
             tokio::spawn(async move {
                 let _slot = slot;
                 // Upstream logs this failure and drops the connection.
-                let _ = connection::serve(socket, peer, handlers, idle_timeout).await;
+                let _ = connection::serve(socket, peer, handlers, idle_timeout, audio_delay_micros)
+                    .await;
             });
         }
     }

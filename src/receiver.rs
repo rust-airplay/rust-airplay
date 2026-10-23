@@ -236,6 +236,18 @@ pub struct Config {
     pub dump_video: Option<std::path::PathBuf>,
     /// Where to write the audio payloads, for diagnosing a stream.
     pub dump_audio: Option<std::path::PathBuf>,
+    /// The audio delay reported to a client by `RECORD`.
+    ///
+    /// Upstream's `-al`. A client schedules its own playback against the number it reads
+    /// from `Audio-Latency`: too small and every packet is late, too large and the stream
+    /// starts late. The default is upstream's quarter of a second.
+    pub audio_latency: std::time::Duration,
+    /// The volume a session starts at.
+    ///
+    /// Upstream's `-vol`. The renderer is told once, before any client connects, so a
+    /// stream opens at this level rather than at full volume. A renderer that cannot take
+    /// it reports the refusal and the receiver goes on.
+    pub initial_volume: crate::Volume,
     /// Whether video is held back to keep the spacing it was captured at.
     ///
     /// Off by default. A mirror is judged by how quickly the picture follows the device,
@@ -503,10 +515,26 @@ pub async fn run(config: Config) -> Result<(), Error> {
         _ => Protection::Pin,
     };
 
+    // The volume is set once, before a session opens: a renderer is told what level to
+    // start at rather than being corrected after the first frame.
+    if let Err(error) = config.renderer.set_volume(config.initial_volume) {
+        log::warn!("rust-airplay: the renderer would not take the initial volume: {error}");
+    }
+    // Upstream validates the same range when it parses `-al` (`uxplay.cpp:1954-1966`).
+    let audio_delay_micros = u32::try_from(config.audio_latency.as_micros())
+        .ok()
+        .filter(|micros| *micros <= crate::control::MAX_AUDIO_DELAY_MICROS)
+        .ok_or_else(|| {
+            Error::from(format!(
+                "audio latency must be between 0 and {} seconds",
+                crate::control::MAX_AUDIO_DELAY_MICROS / 1_000_000
+            ))
+        })?;
     let server_config = ServerConfig {
         bind: format!("0.0.0.0:{}", config.port)
             .parse()
             .map_err(|error| format!("bind address: {error}"))?,
+        audio_delay_micros,
         device: identity.clone(),
         ..ServerConfig::default()
     };
