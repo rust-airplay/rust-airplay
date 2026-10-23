@@ -39,6 +39,9 @@ Three surfaces are involved:
 | `-nohold` | a new client takes over from the current one | `Config::nohold` |
 | `-reset n` | close a session with no feedback for n seconds | `Config::feedback_timeout` |
 | `-FPSdata` | show the client's streaming reports | `Config::log_streaming_reports` |
+| `-ca [fn]` | cover art, or a file to write it to | `Config::on_artwork`; writing a file is the program's |
+| `-md <fn>` | metadata text to a file | `Config::on_metadata` with `media::dmap::text` |
+| `-dacp [fn]` | export the remote-control identifiers | `Config::on_remote_control` |
 | `-taper` | the tapered volume profile | `Config::volume_curve.taper` |
 | `-db l:h` | the decibel range the slider is rescaled onto | `Config::volume_curve.low_db` and `high_db` |
 | `-restrict` | admit only the devices in the allow list | `Config::client_policy.restrict` |
@@ -86,8 +89,6 @@ see the shape before the code exists.
 | Upstream | What it does | Planned surface |
 | --- | --- | --- |
 | `-vsync`, `-async` | timestamp synchronisation modes | `Config::sync` |
-| `-ca`, `-md` | cover art and metadata | callbacks on `Config` |
-| `-dacp [fn]` | export remote-control information | a callback on `Config` |
 | `-mp4 [fn]` | record the session | not planned until the media path supports it |
 | `-lang`, `-slang`, `-custom`, `-rpi` | HTTP Live Streaming tuning | not planned until HLS exists |
 | `-p2p` | peer-to-peer discovery | not planned; `mdns-sd` has no peer-to-peer mode |

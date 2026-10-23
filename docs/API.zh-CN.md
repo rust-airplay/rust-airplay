@@ -42,6 +42,9 @@ pub async fn run(config: Config) -> Result<(), Error>
 | `initial_volume` | `Volume` | 会话起始的滑块位置；对应上游 `-vol` |
 | `volume_curve` | `VolumeCurve` | 客户端的 dB 如何变成增益：平坦或 taper，`-30..0` 区间的重映射；对应上游 `-db` 与 `-taper` |
 | `log_streaming_reports` | `bool` | 把客户端每秒一次的流报告写入日志；对应上游 `-FPSdata` |
+| `on_artwork` | `Option<ArtworkCallback>` | 客户端发送封面图时调用，给出内容类型与字节；对应上游 `-ca` |
+| `on_metadata` | `Option<MetadataCallback>` | 客户端发送 DMAP 列表时调用；`media::dmap::text` 把它变成 `-md` 文件里的行 |
+| `on_remote_control` | `Option<RemoteControlCallback>` | 请求携带 `DACP-ID` 与 `Active-Remote` 时调用；对应上游 `-dacp` |
 | `features` | `Option<u64>` | 广播的 feature 位图；`None` 用默认值，第 42 位允许 HEVC，第 4 位宣称 HLS |
 | `display` | `server::Display` | 客户端从 `/info` 读到的尺寸、刷新率、帧率上限与 overscan；对应上游 `-s`、`-fps`、`-o` |
 | `client_policy` | `server::ClientPolicy` | 允许哪些客户端建立会话，在 `SETUP` 时判定；被拒绝的客户端收到 `403 Forbidden` |

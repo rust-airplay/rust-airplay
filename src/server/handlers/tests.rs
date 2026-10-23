@@ -274,6 +274,87 @@ fn a_volume_set_by_the_client_is_what_the_client_reads_back() {
 }
 
 #[test]
+fn artwork_and_metadata_reach_their_callbacks() {
+    // Upstream's `-ca` and `-md`: a client sends the picture as `image/jpeg` and the
+    // listing as `application/x-dmap-tagged`, both through `SET_PARAMETER`.
+    let mut handlers = RouteHandlers::new(DeviceIdentity::default());
+    let artwork = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_artwork = std::sync::Arc::clone(&artwork);
+    handlers.set_artwork_callback(move |mime, bytes| {
+        seen_artwork
+            .lock()
+            .expect("lock")
+            .push((mime.to_owned(), bytes.to_vec()));
+    });
+    let metadata = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_metadata = std::sync::Arc::clone(&metadata);
+    handlers.set_metadata_callback(move |bytes| {
+        seen_metadata.lock().expect("lock").push(bytes.to_vec());
+    });
+
+    let (head, body) = parse(
+        "SET_PARAMETER /stream",
+        "CSeq: 1\r\nContent-Type: image/png\r\n",
+        b"PNG",
+    );
+    let reply = handlers.set_parameter(&RouteRequest {
+        head: &head,
+        body: &body,
+        peer: None,
+    });
+    assert_eq!(reply.status, 200);
+    assert_eq!(
+        artwork.lock().expect("lock").first(),
+        Some(&("image/png".to_owned(), b"PNG".to_vec()))
+    );
+
+    let (head, body) = parse(
+        "SET_PARAMETER /stream",
+        "CSeq: 2\r\nContent-Type: application/x-dmap-tagged\r\n",
+        b"mlit",
+    );
+    let _ = handlers.set_parameter(&RouteRequest {
+        head: &head,
+        body: &body,
+        peer: None,
+    });
+    assert_eq!(
+        metadata.lock().expect("lock").first(),
+        Some(&b"mlit".to_vec())
+    );
+}
+
+#[test]
+fn the_remote_control_identifiers_are_reported_once() {
+    // `-dacp` exports them, and a callback that fired on every request would rewrite the
+    // same file once a second.
+    let mut handlers = RouteHandlers::new(DeviceIdentity::default());
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = std::sync::Arc::clone(&seen);
+    handlers.set_remote_control_callback(move |dacp, remote| {
+        recorded
+            .lock()
+            .expect("lock")
+            .push((dacp.to_owned(), remote.to_owned()));
+    });
+    let headers = "CSeq: 1\r\nDACP-ID: 1234ABCD\r\nActive-Remote: 42\r\n";
+    for _ in 0..2 {
+        let (head, body) = parse("POST /feedback", headers, &[]);
+        let _ = handlers.handle(
+            crate::control::Route::Feedback,
+            &RouteRequest {
+                head: &head,
+                body: &body,
+                peer: None,
+            },
+        );
+    }
+    let seen = seen.lock().expect("lock");
+    assert_eq!(seen.len(), 1, "the same pair is reported once");
+    assert_eq!(seen[0], ("1234ABCD".to_owned(), "42".to_owned()));
+}
+
+#[test]
 fn info_answers_only_the_requested_txt_record() {
     let mut identity = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Test", Vec::new());
     identity.txt_airplay = Some(b"txt".to_vec());

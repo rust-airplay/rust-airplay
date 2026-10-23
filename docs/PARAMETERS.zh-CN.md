@@ -33,6 +33,9 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-nohold` | 新客户端顶替当前连接 | `Config::nohold` |
 | `-reset n` | 无反馈超过 n 秒就关闭会话 | `Config::feedback_timeout` |
 | `-FPSdata` | 显示客户端的流报告 | `Config::log_streaming_reports` |
+| `-ca [fn]` | 封面图，或写入指定文件 | `Config::on_artwork`；写文件是程序的职责 |
+| `-md <fn>` | 元数据文本写入文件 | `Config::on_metadata` 配合 `media::dmap::text` |
+| `-dacp [fn]` | 导出遥控标识 | `Config::on_remote_control` |
 | `-taper` | 锥形音量曲线 | `Config::volume_curve.taper` |
 | `-db l:h` | 滑块重映射到的分贝范围 | `Config::volume_curve.low_db` 与 `high_db` |
 | `-restrict` | 只允许名单中的设备 | `Config::client_policy.restrict` |
@@ -76,8 +79,6 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | 上游参数 | 作用 | 计划中的接口 |
 | --- | --- | --- |
 | `-vsync`、`-async` | 时间戳同步模式 | `Config::sync` |
-| `-ca`、`-md` | 封面图与元数据 | `Config` 上的回调 |
-| `-dacp [fn]` | 导出遥控信息 | `Config` 上的回调 |
 | `-mp4 [fn]` | 录制会话 | 媒体路径支持之前不计划 |
 | `-lang`、`-slang`、`-custom`、`-rpi` | HTTP Live Streaming 调优 | HLS 存在之前不计划 |
 | `-p2p` | 点对点发现 | 不计划；`mdns-sd` 没有点对点模式 |

@@ -416,6 +416,13 @@ impl Default for DeviceIdentity {
     }
 }
 
+/// What to do with one piece of artwork: its content type and its bytes.
+type ArtworkHandler = Box<dyn FnMut(&str, &[u8]) + Send>;
+/// What to do with one DMAP listing.
+type MetadataHandler = Box<dyn FnMut(&[u8]) + Send>;
+/// What to do with the remote-control identifiers of a request.
+type RemoteControlHandler = Box<dyn FnMut(&str, &str) + Send>;
+
 /// The handlers one control connection uses.
 ///
 /// Upstream keeps the same state in `raop_conn_t`, so one instance serves one
@@ -445,6 +452,15 @@ pub struct RouteHandlers {
     /// A client that keeps a session alive by asking for feedback is a client that is
     /// still there; the transport watches this clock to decide when a silent one has gone.
     feedback_clock: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// What to do with artwork a client sends.
+    artwork: Option<ArtworkHandler>,
+    /// What to do with the metadata listing a client sends.
+    metadata: Option<MetadataHandler>,
+    /// What to do with the remote-control identifiers a request carries.
+    remote_control: Option<RemoteControlHandler>,
+    /// The identifiers the last request carried, so a callback fires when they change
+    /// rather than on every request.
+    last_remote: Option<(String, String)>,
     /// The volume the client last asked for.
     ///
     /// Upstream keeps the same value on its audio renderer and answers `GET_PARAMETER`
@@ -479,6 +495,10 @@ impl RouteHandlers {
             client_policy: ClientPolicy::default(),
             feedback_clock: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_millis())),
             client_volume: std::sync::Arc::new(std::sync::Mutex::new(identity_volume)),
+            artwork: None,
+            metadata: None,
+            remote_control: None,
+            last_remote: None,
             parameter: None,
             trace: None,
             authenticated: false,
@@ -540,6 +560,35 @@ impl RouteHandlers {
         &self.identity
     }
 
+    /// Sets what to do with artwork a client sends.
+    ///
+    /// A client sends its cover art as `SET_PARAMETER` with `Content-Type: image/jpeg` or
+    /// `image/png` (`raop_handlers.h:1164-1171`); upstream hands the bytes to its renderer
+    /// and this crate hands them to the caller, which is the only place a file can exist.
+    pub fn set_artwork_callback(&mut self, callback: impl FnMut(&str, &[u8]) + Send + 'static) {
+        self.artwork = Some(Box::new(callback));
+    }
+
+    /// Sets what to do with the metadata listing a client sends.
+    ///
+    /// The bytes are a DMAP listing; `media::dmap` is how this crate reads it, and upstream
+    /// writes the text to its `-md` file (`uxplay.cpp:2940-2952`).
+    pub fn set_metadata_callback(&mut self, callback: impl FnMut(&[u8]) + Send + 'static) {
+        self.metadata = Some(Box::new(callback));
+    }
+
+    /// Sets what to do with the remote-control identifiers a request carries.
+    ///
+    /// `DACP-ID` and `Active-Remote` name the client a remote control belongs to; upstream
+    /// exports them for `-dacp` (`uxplay.cpp`). They authorize nothing: the headers are
+    /// whatever the client wrote.
+    pub fn set_remote_control_callback(
+        &mut self,
+        callback: impl FnMut(&str, &str) + Send + 'static,
+    ) {
+        self.remote_control = Some(Box::new(callback));
+    }
+
     /// Sets which clients may start a session.
     ///
     /// Upstream consults its `report_client_request` callback in the middle of `SETUP`
@@ -591,12 +640,32 @@ impl RouteHandlers {
     }
 }
 
+impl RouteHandlers {
+    /// Reports the remote-control identifiers of a request, once per distinct pair.
+    fn report_remote_control(&mut self, request: &RouteRequest<'_>) {
+        let dacp = request.head.header("dacp-id");
+        let active = request.head.header("active-remote");
+        let (Some(dacp), Some(active)) = (dacp, active) else {
+            return;
+        };
+        let pair = (dacp.to_owned(), active.to_owned());
+        if self.last_remote.as_ref() == Some(&pair) {
+            return;
+        }
+        self.last_remote = Some(pair.clone());
+        if let Some(callback) = self.remote_control.as_mut() {
+            callback(&pair.0, &pair.1);
+        }
+    }
+}
+
 impl RouteHandler for RouteHandlers {
     fn feedback_clock(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicU64>> {
         Some(std::sync::Arc::clone(&self.feedback_clock))
     }
 
     fn handle(&mut self, route: Route, request: &RouteRequest<'_>) -> Option<RouteReply> {
+        self.report_remote_control(request);
         match route {
             Route::Feedback => Some(self.feedback_reply()),
             Route::Info => Some(self.info(request)),
@@ -950,7 +1019,20 @@ impl RouteHandlers {
             // about what it carries (`:1135-1139`).
             return RouteReply::new(451, "Parameter not understood");
         };
-        if content_type.trim() != "text/parameters" {
+        let media_type = content_type.trim();
+        if media_type == "image/jpeg" || media_type == "image/png" {
+            if let Some(callback) = self.artwork.as_mut() {
+                callback(media_type, request.body);
+            }
+            return RouteReply::new(200, "OK");
+        }
+        if media_type == "application/x-dmap-tagged" {
+            if let Some(callback) = self.metadata.as_mut() {
+                callback(request.body);
+            }
+            return RouteReply::new(200, "OK");
+        }
+        if media_type != "text/parameters" {
             return RouteReply::new(200, "OK");
         }
         // Upstream only looks at the start of the body (`:1146`, `:1155`), so a

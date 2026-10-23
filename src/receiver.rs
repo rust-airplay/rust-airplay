@@ -331,6 +331,21 @@ pub struct Config {
     /// matches, so this is how a receiver asks for a smaller picture or a lower frame
     /// rate without touching the stream afterwards.
     pub display: crate::server::Display,
+    /// What to do with artwork a client sends, given its content type.
+    ///
+    /// Upstream's `-ca`: the bytes are a JPEG or PNG the program may write or show. The
+    /// library cannot write a file, so this is the callback that lets a program do it.
+    pub on_artwork: Option<ArtworkCallback>,
+    /// What to do with the metadata listing a client sends.
+    ///
+    /// Upstream's `-md`: the bytes are a DMAP listing, which [`crate::media::dmap::text`]
+    /// turns into the lines that file holds.
+    pub on_metadata: Option<MetadataCallback>,
+    /// What to do with the remote-control identifiers a request carries.
+    ///
+    /// Upstream's `-dacp`: a program can write them where a remote control expects to find
+    /// them. They authorize nothing; they name a connection.
+    pub on_remote_control: Option<RemoteControlCallback>,
     /// Whether the client's streaming reports are written to the log.
     ///
     /// Upstream's `-FPSdata`. A report is a binary plist a mirroring client sends once a
@@ -355,6 +370,15 @@ pub struct Config {
     /// a stream that arrives in bursts and a viewer who watches rather than types.
     pub pace_video: bool,
 }
+
+/// Called with the content type and bytes of artwork a client sends.
+pub type ArtworkCallback = Arc<dyn Fn(&str, &[u8]) + Send + Sync>;
+
+/// Called with the raw DMAP listing a client sends.
+pub type MetadataCallback = Arc<dyn Fn(&[u8]) + Send + Sync>;
+
+/// Called with the `DACP-ID` and `Active-Remote` a request carries.
+pub type RemoteControlCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 /// What the two streams' first frames say about their shared clock.
 ///
@@ -1133,6 +1157,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let mirror_probe = Arc::clone(&probe);
     let pace_video = config.pace_video;
     let log_reports = config.log_streaming_reports;
+    let on_artwork = config.on_artwork.clone();
+    let on_metadata = config.on_metadata.clone();
+    let on_remote_control = config.on_remote_control.clone();
     let video_flush_task = Arc::clone(&video_flush);
     tokio::spawn(async move {
         // The listener accepts from the moment the receiver is up, which is not the
@@ -1625,6 +1652,15 @@ pub async fn run(config: Config) -> Result<(), Error> {
             // to send instead of guessing.
             handlers.set_setup_ports(setup_ports);
             handlers.set_client_policy(client_policy.clone());
+            if let Some(callback) = on_artwork.clone() {
+                handlers.set_artwork_callback(move |mime, bytes| callback(mime, bytes));
+            }
+            if let Some(callback) = on_metadata.clone() {
+                handlers.set_metadata_callback(move |bytes| callback(bytes));
+            }
+            if let Some(callback) = on_remote_control.clone() {
+                handlers.set_remote_control_callback(move |dacp, remote| callback(dacp, remote));
+            }
             {
                 let renderer = Arc::clone(&volume_renderer);
                 handlers.set_parameter_callback(move |parameter| {

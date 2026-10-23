@@ -39,7 +39,9 @@ pub mod server;
 pub mod srp;
 pub mod wire;
 
-pub use receiver::{Config, Error as ReceiverError, run};
+pub use receiver::{
+    ArtworkCallback, Config, Error as ReceiverError, MetadataCallback, RemoteControlCallback, run,
+};
 pub use render::{
     AudioCodec, AudioConfig, AudioFrame, AudioStream, NullRenderer, RenderError, Renderer,
     VideoCodec, VideoConfig, VideoFrame, VideoStream, Volume, VolumeCurve, airplay_db_to_fraction,
