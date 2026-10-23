@@ -84,7 +84,8 @@ this crate:
 ## Where this leaves the table
 
 Every upstream option is now in exactly one place: implemented on a library value, a backend
-option, a program decision, or the not-supported list below with a reason. There is no
+option, a program decision, or the not-supported list below with a reason. The program's
+command line uses upstream's names too - see the CLI repository's README. There is no
 "planned" tier left to read as a promise.
 
 ## Not supported
