@@ -30,7 +30,7 @@ pub async fn run(config: Config) -> Result<(), Error>
 | `device_id` | `Option<String>` | 要广播的硬件地址；`None` 时由种子派生 |
 | `pin` | `PinMode` | `Disabled`、`OneTime` 或 `Fixed(digits)`。PIN 通过 `log` 输出，想用别的方式显示的程序可以自己装 logger |
 | `password` | `Option<String>` | 设置后，`SETUP` 还需要这个 digest 口令 |
-| `audio_codec` | `AudioCodec` | `Alac` 或 `AacEld`。客户端不会声明，所以由调用方给出 |
+| `audio_codec` | `AudioCodec` | `Alac` 或 `AacEld`；客户端在 `SETUP` 中声明 `ct` 时以声明为准 |
 | `renderer` | `Arc<dyn Renderer>` | 播放媒体的实现 |
 | `clients` | `Arc<Mutex<HashSet<[u8; 32]>>>` | 已验证的客户端密钥。启动时读取，验证通过后就加进去 |
 | `on_client` | `Option<ClientCallback>` | 客户端首次通过验证时调用，便于调用方持久化该密钥 |
@@ -75,7 +75,7 @@ pub trait Renderer: Debug + Send + Sync {
 
 | 类型 | 内容 |
 | --- | --- |
-| `AudioConfig` | 编码、采样率、声道数、每帧采样数 |
+| `AudioConfig` | 编码、采样率、声道数、每帧采样数；客户端声明 `spf` 时以后者为准 |
 | `AudioFrame` | 编码后的负载，以及以会话采样数计的时间戳 |
 | `VideoConfig` | 客户端声明过的宽高，以及帧的编码 |
 | `VideoFrame` | Annex-B 访问单元、时间戳、是否为关键帧 |

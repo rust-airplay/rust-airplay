@@ -52,6 +52,21 @@ impl AudioCodec {
         }
     }
 
+    /// The coding a client's `ct` names, when it names one this crate decodes.
+    ///
+    /// `2` is ALAC and `8` is AAC-ELD (`raop_rtp.c:113`). A client states one or the
+    /// other in `SETUP`, and upstream takes its decoder from that rather than from a
+    /// setting: both are compressed, and a decoder handed the wrong one reports a stream it
+    /// cannot read rather than the mix-up.
+    #[must_use]
+    pub fn from_compression_type(compression_type: u16) -> Option<Self> {
+        match compression_type {
+            2 => Some(Self::Alac),
+            8 => Some(Self::AacEld),
+            _ => None,
+        }
+    }
+
     /// The name GStreamer and FFmpeg know this coding by, which a backend needs for
     /// its pipeline and a log needs to be readable.
     pub fn name(self) -> &'static str {
@@ -71,6 +86,12 @@ pub struct AudioConfig {
     pub sample_rate: u32,
     /// Channels per frame.
     pub channels: u8,
+    /// Samples in one coded frame, which a client states as `spf` in `SETUP`.
+    ///
+    /// It matters to a decoder that has to know where a frame ends: ALAC and AAC-ELD
+    /// frames are not the same length, and a backend told only the coding can still be
+    /// wrong about the frame.
+    pub samples_per_frame: u16,
 }
 
 impl Default for AudioConfig {
@@ -79,6 +100,7 @@ impl Default for AudioConfig {
             codec: AudioCodec::Alac,
             sample_rate: 44_100,
             channels: 2,
+            samples_per_frame: 480,
         }
     }
 }
@@ -594,6 +616,20 @@ mod tests {
     }
 
     #[test]
+    fn a_client_s_compression_type_names_its_coding() {
+        // The two codings a client states, and nothing invented for the others: a
+        // receiver that guessed at `ct = 3` would feed a decoder a stream it cannot read.
+        assert_eq!(AudioCodec::from_compression_type(2), Some(AudioCodec::Alac));
+        assert_eq!(
+            AudioCodec::from_compression_type(8),
+            Some(AudioCodec::AacEld)
+        );
+        assert_eq!(AudioCodec::from_compression_type(0), None);
+        assert_eq!(AudioCodec::from_compression_type(3), None);
+        assert_eq!(AudioCodec::from_compression_type(255), None);
+    }
+
+    #[test]
     fn the_two_streams_of_one_renderer_are_counted_apart() {
         // A session can have audio without video and the other way round, so a backend
         // that shared one counter between them could not be checked against what a
@@ -604,6 +640,7 @@ mod tests {
                 codec: AudioCodec::AacEld,
                 sample_rate: 44_100,
                 channels: 1,
+                samples_per_frame: 480,
             })
             .expect("audio");
         audio

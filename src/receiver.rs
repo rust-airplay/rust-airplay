@@ -197,9 +197,11 @@ const QUEUED_AUDIO_FRAMES: usize = 256;
 fn open_audio(
     renderer: &Arc<dyn crate::Renderer>,
     codec: AudioCodec,
+    samples_per_frame: u16,
 ) -> Option<Box<dyn crate::AudioStream>> {
     let config = AudioConfig {
         codec,
+        samples_per_frame,
         ..AudioConfig::default()
     };
     match renderer.open_audio(config) {
@@ -265,7 +267,12 @@ pub struct Config {
     pub pin: PinMode,
     /// Digest password, when the caller configured one.
     pub password: Option<String>,
-    /// The coding an audio stream is expected to carry.
+    /// The coding an audio stream is expected to carry, when the client does not say.
+    ///
+    /// A client states its coding as `ct` in the `SETUP` that names the stream
+    /// (`raop_handlers.h:995-1030`), and that declaration wins. This value is what a
+    /// session falls back to when the client never declares one, which is what older
+    /// clients did.
     pub audio_codec: AudioCodec,
     /// What plays the media.
     pub renderer: Arc<dyn Renderer>,
@@ -756,6 +763,10 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let stopping = shutdown_signal();
     let audio_stop = stopping.clone();
     let (media_key, media_ready) = tokio::sync::oneshot::channel::<([u8; 16], [u8; 16])>();
+    // What the client says it is sending, as `(coding, samples per frame)`. The SETUP that
+    // names an audio stream carries it (`raop_handlers.h:995-1030`), and it can arrive a
+    // moment after the SETUP that carries the key, so the audio task waits for it briefly.
+    let declared_audio: Arc<Mutex<Option<(AudioCodec, u16)>>> = Arc::new(Mutex::new(None));
     let media_key = Arc::new(Mutex::new(Some(media_key)));
     // The audio key of the session, kept where every control connection can see it.
     //
@@ -800,6 +811,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let audio_stop = audio_stop.clone();
     let audio_flush_task = Arc::clone(&audio_flush);
     let audio_probes = Arc::clone(&probe);
+    let declared_audio_task = Arc::clone(&declared_audio);
     tokio::spawn(async move {
         tokio::select! {
             _ = stopped(audio_stop.clone()) => {}
@@ -807,7 +819,28 @@ pub async fn run(config: Config) -> Result<(), Error> {
                 let Ok((key, iv)) = ready else {
                     return;
                 };
-                let stream = open_audio(&audio_renderer, audio_codec);
+                // A client that names its coding gets that coding; one that never does
+                // falls back to the configured default after a short wait. Upstream starts
+                // audio from the same declaration (`raop_handlers.h:995-1034`), so the wait
+                // is the interval between two SETUP requests rather than a guess.
+                let waiting = std::time::Instant::now();
+                let declared = loop {
+                    if let Some(found) = declared_audio_task.lock().ok().and_then(|slot| *slot) {
+                        break Some(found);
+                    }
+                    if waiting.elapsed() >= std::time::Duration::from_millis(500) {
+                        break None;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                };
+                let (codec, samples_per_frame) = declared.unwrap_or((audio_codec, 480));
+                if declared.is_none() {
+                    log::info!(
+                        "media     no audio format declared; using {} as configured",
+                        codec.name()
+                    );
+                }
+                let stream = open_audio(&audio_renderer, codec, samples_per_frame);
                 let mut session = crate::media::ports::session(key, iv);
                 // Published before the first datagram, so a `FLUSH` that arrives early is
                 // not lost: the slot holds the request until the session applies it.
@@ -1565,7 +1598,20 @@ pub async fn run(config: Config) -> Result<(), Error> {
                 // connection that served it, so it is the session's rather than this
                 // handler set's.
                 let session_audio_key = Arc::clone(&session_audio_key);
+                let declared = Arc::clone(&declared_audio);
                 handlers.set_setup_callback(move |request| {
+                    for stream in &request.streams {
+                        if stream.kind == 96
+                            && let Some(codec) = stream
+                                .compression_type
+                                .and_then(AudioCodec::from_compression_type)
+                        {
+                            let spf = stream.samples_per_frame.unwrap_or(480);
+                            if let Ok(mut slot) = declared.lock() {
+                                *slot = Some((codec, spf));
+                            }
+                        }
+                    }
                     // Which streams a client asked for is what decides whether the
                     // mirror listener will ever see a connection, so it is part of
                     // what a session log has to say.

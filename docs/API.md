@@ -38,7 +38,7 @@ instead of a hidden default. The library reads no environment variable and opens
 | `device_id` | `Option<String>` | the hardware address to advertise, when the caller wants a specific one. Derived from the seed when `None` |
 | `pin` | `PinMode` | `Disabled`, `OneTime`, or `Fixed(digits)`. The PIN is surfaced through `log`, so a program that wants to display it differently can install its own logger |
 | `password` | `Option<String>` | when set, `SETUP` also requires this digest password |
-| `audio_codec` | `AudioCodec` | `Alac` or `AacEld`. Clients do not state it, so the caller does |
+| `audio_codec` | `AudioCodec` | `Alac` or `AacEld`, used when a client does not state its own `ct` in `SETUP` |
 | `renderer` | `Arc<dyn Renderer>` | what plays the media |
 | `clients` | `Arc<Mutex<HashSet<[u8; 32]>>>` | client keys already verified. The receiver reads it at startup and adds to it as clients are verified |
 | `on_client` | `Option<ClientCallback>` | called the first time a client is verified, so the caller can persist the key |
@@ -94,7 +94,7 @@ what it was given, which makes it useful in tests as well as for inspecting a se
 
 | Type | Contents |
 | --- | --- |
-| `AudioConfig` | codec, sample rate, channels, samples per frame |
+| `AudioConfig` | codec, sample rate, channels, samples per frame; the last two come from the client's `spf` when it states one |
 | `AudioFrame` | the coded payload and a timestamp in samples of the session rate |
 | `VideoConfig` | width and height when the client stated them, and the coding of the frames |
 | `VideoFrame` | an Annex-B access unit, a timestamp, and whether it is a key frame |
