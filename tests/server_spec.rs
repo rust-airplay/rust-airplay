@@ -816,7 +816,7 @@ async fn parameters_report_volume_and_progress_and_answer_451_without_a_content_
         .expect("response");
     let (head, body) = response_parts(&response);
     assert_eq!(header_value(head, "Content-Type"), Some("text/parameters"));
-    assert_eq!(body, b"volume:  0.000000\r\n");
+    assert_eq!(body, b"volume:  0.250000\r\n");
     server.shutdown();
 }
 

@@ -60,6 +60,20 @@ fn hex(bytes: &[u8]) -> String {
 /// stall a decoder produces and far below anything a receiver would notice holding.
 const QUEUED_FRAMES: usize = 8;
 
+/// One frame waiting for the video writer.
+///
+/// The bytes, the client's timestamp, whether it is a key frame, when it arrived, the
+/// coding it is in and the geometry the session announced: everything the writer needs to
+/// open a stream on the first frame and pace the rest.
+type QueuedVideo = (
+    Vec<u8>,
+    u64,
+    bool,
+    u64,
+    crate::render::VideoCodec,
+    Option<crate::media::mirror::Geometry>,
+);
+
 /// Frames waiting for the renderer, where a full queue drops the **oldest**.
 ///
 /// A channel would be the obvious thing and it is wrong here. `SyncSender` refuses the
@@ -78,7 +92,7 @@ struct FreshestFrames {
 
 #[derive(Debug, Default)]
 struct Frames {
-    queued: std::collections::VecDeque<(Vec<u8>, u64, bool, u64, crate::render::VideoCodec)>,
+    queued: std::collections::VecDeque<QueuedVideo>,
     /// Set when no more frames will arrive, which is what wakes the writer for the last
     /// time.
     ended: bool,
@@ -98,7 +112,7 @@ impl FreshestFrames {
     ///
     /// Returns how many are waiting afterwards, so a caller can report a depth without
     /// asking a second question.
-    fn put(&self, frame: (Vec<u8>, u64, bool, u64, crate::render::VideoCodec)) -> usize {
+    fn put(&self, frame: QueuedVideo) -> usize {
         let mut state = lock(&self.state);
         if state.ended {
             return 0;
@@ -115,7 +129,7 @@ impl FreshestFrames {
     }
 
     /// Takes the next frame, waiting until there is one or the queue has ended.
-    fn take(&self) -> Option<(Vec<u8>, u64, bool, u64, crate::render::VideoCodec)> {
+    fn take(&self) -> Option<QueuedVideo> {
         let mut state = lock(&self.state);
         loop {
             if let Some(frame) = state.queued.pop_front() {
@@ -1120,7 +1134,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     // established: consecutive frames differed by 143156808 of them.
                     let mut pacer =
                         crate::media::pace::Pacer::new(crate::media::pace::Ticks::NtpFixed);
-                    while let Some((data, timestamp, idr, received, codec)) = queued.take() {
+                    while let Some((data, timestamp, idr, received, codec, geometry)) =
+                        queued.take()
+                    {
                         // What the pacing is actually told, for the first frames: the
                         // interval a device sends is not a frame rate this crate can
                         // assume, and a wrong one is a wait that stalls a picture
@@ -1170,13 +1186,13 @@ pub async fn run(config: Config) -> Result<(), Error> {
                         // announced.
                         if video.is_none() {
                             match writer_renderer.open_video(crate::VideoConfig {
-                                width: None,
-                                height: None,
+                                width: geometry.map(|geometry| u32::from(geometry.width)),
+                                height: geometry.map(|geometry| u32::from(geometry.height)),
                                 codec,
                             }) {
                                 Ok(stream) => {
                                     log::info!(
-                                        "media     video stream open in {} ms (at +{} ms), {}                                          frames",
+                                        "media     video stream open in {} ms (at +{} ms), {} frames",
                                         opening_writer.elapsed().as_millis(),
                                         started.elapsed().as_millis(),
                                         codec.name()
@@ -1333,7 +1349,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
                         // reads it as it stands. A copy per packet would be a copy of
                         // something the reporter can already see.
                     },
-                    |frame, codec| {
+                    |frame, codec, geometry| {
                     frames += 1;
                     frames_out.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if frames == 1 {
@@ -1380,7 +1396,14 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     // way a dropped frame is one the rest of the stream may depend on.
                     sent += 1;
                     let received = started.elapsed().as_nanos() as u64;
-                    let depth = feed.put((frame.data, frame.timestamp, frame.idr, received, codec));
+                    let depth = feed.put((
+                        frame.data,
+                        frame.timestamp,
+                        frame.idr,
+                        received,
+                        codec,
+                        geometry,
+                    ));
                     if refused == 0 && depth >= QUEUED_FRAMES {
                         refused = 1;
                         log::warn!(
@@ -1424,6 +1447,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // connection, so it is captured once here rather than reached for through `config`.
     let on_client = config.on_client.clone();
     let client_policy = config.client_policy.clone();
+    // A client changes the volume with `SET_PARAMETER volume:`; the renderer is where a
+    // volume means anything, so the two are connected here.
+    let volume_renderer = Arc::clone(&config.renderer);
     let result = server
         .run(move || {
             let log = trace_log.clone();
@@ -1433,6 +1459,18 @@ pub async fn run(config: Config) -> Result<(), Error> {
             // to send instead of guessing.
             handlers.set_setup_ports(setup_ports);
             handlers.set_client_policy(client_policy.clone());
+            {
+                let renderer = Arc::clone(&volume_renderer);
+                handlers.set_parameter_callback(move |parameter| {
+                    if let crate::server::SetParameter::Volume(level) = parameter {
+                        let volume = crate::Volume::new(f64::from(level));
+                        log::info!("media     the client set the volume to {level:.3}");
+                        if let Err(error) = renderer.set_volume(volume) {
+                            log::warn!("rust-airplay: the renderer refused a volume: {error}");
+                        }
+                    }
+                });
+            }
             // A session that carries a verified client key is a client worth
             // remembering, so the next run can answer for it.
             {

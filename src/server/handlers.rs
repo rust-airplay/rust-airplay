@@ -441,6 +441,13 @@ pub struct RouteHandlers {
     /// A client that keeps a session alive by asking for feedback is a client that is
     /// still there; the transport watches this clock to decide when a silent one has gone.
     feedback_clock: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// The volume the client last asked for.
+    ///
+    /// Upstream keeps the same value on its audio renderer and answers `GET_PARAMETER`
+    /// with it (`raop_handlers.h:1093-1097`); a client that reads back what it set is a
+    /// client that can show the right slider. Shared between connections because a
+    /// session's volume does not belong to one socket.
+    client_volume: std::sync::Arc<std::sync::Mutex<f64>>,
     parameter: Option<Box<dyn FnMut(SetParameter) + Send>>,
     trace: Option<TraceCallback>,
     authenticated: bool,
@@ -454,6 +461,7 @@ impl RouteHandlers {
     /// The pairing routes answer `501 Not Implemented` until a caller adds
     /// [`PairingState`] with [`RouteHandlers::with_pairing`].
     pub fn new(identity: DeviceIdentity) -> Self {
+        let identity_volume = identity.initial_volume.clamp(0.0, 1.0);
         Self {
             identity,
             fairplay: FairPlaySession::new(),
@@ -466,6 +474,7 @@ impl RouteHandlers {
             setup: None,
             client_policy: ClientPolicy::default(),
             feedback_clock: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_millis())),
+            client_volume: std::sync::Arc::new(std::sync::Mutex::new(identity_volume)),
             parameter: None,
             trace: None,
             authenticated: false,
@@ -971,6 +980,13 @@ impl RouteHandlers {
                     })
                 })
             });
+        if let Some(SetParameter::Volume(level)) = parameter {
+            // The client's value is what the receiver plays at from here on, and what it
+            // answers with when asked; upstream does the same through its renderer.
+            if let Ok(mut volume) = self.client_volume.lock() {
+                *volume = f64::from(level).clamp(0.0, 1.0);
+            }
+        }
         if let Some(parameter) = parameter {
             if let Some(callback) = self.parameter.as_mut() {
                 callback(parameter);
@@ -994,9 +1010,14 @@ impl RouteHandlers {
             return RouteReply::new(200, "OK");
         }
         if request.body.starts_with(b"volume") {
+            let volume = self
+                .client_volume
+                .lock()
+                .map(|volume| *volume)
+                .unwrap_or(0.0);
             return RouteReply::new(200, "OK")
                 .with_header("Content-Type", "text/parameters")
-                .with_body(format!("volume: {:9.6}\r\n", 0.0_f32).into_bytes());
+                .with_body(format!("volume: {volume:9.6}\r\n").into_bytes());
         }
         RouteReply::new(200, "OK")
     }
@@ -1091,10 +1112,12 @@ impl RouteHandlers {
             return binary_plist(plist::Value::Dictionary(dictionary));
         }
 
-        dictionary.insert(
-            "initialVolume".to_owned(),
-            self.identity.initial_volume.into(),
-        );
+        let volume = self
+            .client_volume
+            .lock()
+            .map(|volume| *volume)
+            .unwrap_or(self.identity.initial_volume);
+        dictionary.insert("initialVolume".to_owned(), volume.into());
         dictionary.insert("audioLatencies".to_owned(), audio_latencies());
         dictionary.insert("audioFormats".to_owned(), audio_formats());
         dictionary.insert("displays".to_owned(), displays(&self.identity));

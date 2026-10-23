@@ -222,6 +222,56 @@ Content-Type: application/x-apple-binary-plist
 }
 
 #[test]
+fn a_volume_set_by_the_client_is_what_the_client_reads_back() {
+    // Upstream answers `GET_PARAMETER volume` with the value its renderer is playing at
+    // (`raop_handlers.h:1093-1097`); a constant zero is a receiver telling a client its
+    // slider is where it is not.
+    let mut handlers = RouteHandlers::new(DeviceIdentity::default());
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = std::sync::Arc::clone(&seen);
+    handlers.set_parameter_callback(move |parameter| {
+        recorded.lock().expect("lock").push(parameter);
+    });
+
+    let body = b"volume: 0.250000\r\n";
+    let (head, request_body) = parse(
+        "SET_PARAMETER /volume",
+        "CSeq: 1\r\nContent-Type: text/parameters\r\n",
+        body,
+    );
+    assert_eq!(head.method.as_str(), "SET_PARAMETER");
+    assert_eq!(
+        head.header("content-type"),
+        Some("text/parameters"),
+        "headers: {:?}",
+        head.headers
+    );
+    let reply = handlers.set_parameter(&RouteRequest {
+        head: &head,
+        body: &request_body,
+        peer: None,
+    });
+    assert_eq!(reply.status, 200, "reply status");
+    match seen.lock().expect("lock").first() {
+        Some(super::SetParameter::Volume(level)) => assert!((level - 0.25).abs() < 1e-6),
+        other => panic!("the callback saw {other:?}"),
+    }
+
+    let (head, _) = parse(
+        "GET_PARAMETER /volume",
+        "CSeq: 2\r\nContent-Type: text/parameters\r\n",
+        b"volume\r\n",
+    );
+    let reply = handlers.get_parameter(&RouteRequest {
+        head: &head,
+        body: b"volume\r\n",
+        peer: None,
+    });
+    let text = String::from_utf8_lossy(&reply.body);
+    assert!(text.contains("0.250000"), "answered {text:?}");
+}
+
+#[test]
 fn info_answers_only_the_requested_txt_record() {
     let mut identity = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Test", Vec::new());
     identity.txt_airplay = Some(b"txt".to_vec());

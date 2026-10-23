@@ -122,6 +122,59 @@ impl MirrorKind {
     }
 }
 
+/// The picture geometry a codec packet announces.
+///
+/// The codec packet is the only place a mirroring client states these, and it states them
+/// as floats that are whole numbers (`raop_rtp_mirror.c:555-575`): the source size at 16 and
+/// 20, the offsets at 48 and 52, and the size the picture is drawn at at 56 and 60. A
+/// receiver that does not read them hands its backend `None` for a size the client already
+/// told it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Geometry {
+    /// Width the client captured.
+    pub width_source: u16,
+    /// Height the client captured.
+    pub height_source: u16,
+    /// Horizontal offset of the picture in the frame.
+    pub x_offset: u16,
+    /// Vertical offset of the picture in the frame.
+    pub y_offset: u16,
+    /// Width the picture is drawn at.
+    pub width: u16,
+    /// Height the picture is drawn at.
+    pub height: u16,
+}
+
+impl Geometry {
+    /// Reads the geometry from a codec packet, or `None` when it does not hold it.
+    ///
+    /// A float that is not a whole number, or a zero size, is not geometry: upstream prints
+    /// the same values for a person to read and carries on, and a receiver that took a
+    /// garbage size would open a pipeline it cannot use.
+    #[must_use]
+    pub fn from_codec_packet(datagram: &[u8]) -> Option<Self> {
+        let read = |offset: usize| -> Option<u16> {
+            let bytes: [u8; 4] = datagram.get(offset..offset + 4)?.try_into().ok()?;
+            let value = f32::from_le_bytes(bytes);
+            let rounded = value.round();
+            (rounded.is_finite()
+                && value == rounded
+                && rounded >= 0.0
+                && rounded <= f32::from(u16::MAX))
+            .then_some(rounded as u16)
+        };
+        let geometry = Self {
+            width_source: read(16)?,
+            height_source: read(20)?,
+            x_offset: read(48)?,
+            y_offset: read(52)?,
+            width: read(56)?,
+            height: read(60)?,
+        };
+        (geometry.width > 0 && geometry.height > 0).then_some(geometry)
+    }
+}
+
 /// The header of one mirror packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MirrorHeader {
@@ -137,6 +190,8 @@ pub struct MirrorHeader {
     /// (`raop_rtp_mirror.c:363`), so it is zero there and must not be read as a
     /// time.
     pub timestamp: u64,
+    /// The picture geometry a codec packet announces, when it announces one.
+    pub geometry: Option<Geometry>,
 }
 
 /// Why a mirror packet could not be read.
@@ -254,6 +309,12 @@ pub fn parse_header(datagram: &[u8]) -> Result<MirrorHeader, MirrorError> {
         // (`raop_rtp_mirror.c:580-586`), not as a number.
         option: u16::from_be_bytes(datagram[6..8].try_into().expect("two bytes")),
         timestamp: u64::from_le_bytes(datagram[8..16].try_into().expect("eight bytes")),
+        geometry: matches!(
+            MirrorKind::from_header(datagram[4], datagram[5]),
+            MirrorKind::CodecData
+        )
+        .then(|| Geometry::from_codec_packet(datagram))
+        .flatten(),
     };
     let promised = header.payload_size as usize;
     if promised > MAX_PAYLOAD {
@@ -943,6 +1004,8 @@ impl std::error::Error for FrameError {}
 pub struct MirrorSession {
     decryptor: MirrorDecryptor,
     codec: CodecConfig,
+    /// The picture geometry the last codec packet announced.
+    geometry: Option<Geometry>,
     /// Frames handed out so far, which is what a caller reports to say the stream
     /// is alive.
     frames: u64,
@@ -1172,6 +1235,7 @@ impl MirrorSession {
         Ok(Self {
             decryptor: MirrorDecryptor::new(keys)?,
             codec: CodecConfig::new(),
+            geometry: None,
             frames: 0,
             dropped: std::sync::Arc::new(PacketCensus::default()),
         })
@@ -1185,6 +1249,7 @@ impl MirrorSession {
     /// Returns [`crate::crypto::CryptoError`] when the keys have the wrong shape.
     pub fn rekey(&mut self, keys: &StreamKeys) -> Result<(), crate::crypto::CryptoError> {
         self.codec = CodecConfig::new();
+        self.geometry = None;
         self.decryptor.rekey(keys)
     }
 
@@ -1192,6 +1257,15 @@ impl MirrorSession {
     /// What this session did with the packets that were not frames.
     pub fn census(&self) -> std::sync::Arc<PacketCensus> {
         std::sync::Arc::clone(&self.dropped)
+    }
+
+    /// The picture geometry the stream announced, once its configuration packet arrived.
+    ///
+    /// `None` before it, which a caller that opens a backend stream on the first frame
+    /// reads as "the client has not said".
+    #[must_use]
+    pub fn geometry(&self) -> Option<Geometry> {
+        self.geometry
     }
 
     /// Frames handed out so far.
@@ -1232,6 +1306,7 @@ impl MirrorSession {
                 // A codec packet that cannot be read is dropped rather than treated
                 // as fatal: the client sends another when the format changes.
                 self.dropped.count(PacketKind::Codec);
+                self.geometry = header.geometry.or(self.geometry);
                 let _ = self.codec.codec_data(header.timestamp, payload);
                 Ok(None)
             }
@@ -1335,6 +1410,51 @@ fn hex_preview(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::{Geometry, HEADER_LEN, parse_header};
+
+    /// A codec packet with the geometry a device sends: whole numbers as floats.
+    fn codec_packet(width: u16, height: u16) -> Vec<u8> {
+        let mut packet = vec![0u8; HEADER_LEN + 4];
+        packet[4] = 0x01;
+        packet[5] = 0x00;
+        let mut put = |offset: usize, value: u16| {
+            packet[offset..offset + 4].copy_from_slice(&f32::from(value).to_le_bytes());
+        };
+        put(16, width);
+        put(20, height);
+        put(40, width);
+        put(44, height);
+        put(48, 0);
+        put(52, 0);
+        put(56, width);
+        put(60, height);
+        packet
+    }
+
+    #[test]
+    fn a_codec_packet_announces_the_picture_it_will_send() {
+        let packet = codec_packet(1554, 1080);
+        let header = parse_header(&packet).expect("a header");
+        let geometry = header.geometry.expect("the geometry a device sends");
+        assert_eq!(geometry.width, 1554);
+        assert_eq!(geometry.height, 1080);
+        assert_eq!(geometry.width_source, 1554);
+        assert_eq!(geometry.height_source, 1080);
+    }
+
+    #[test]
+    fn a_packet_without_geometry_announces_none() {
+        let mut packet = vec![0u8; HEADER_LEN];
+        packet[4] = 0x00;
+        let header = parse_header(&packet).expect("a header");
+        assert!(header.geometry.is_none(), "a video packet has no geometry");
+        // And a codec packet full of zeroes is not geometry either.
+        assert!(Geometry::from_codec_packet(&packet).is_none());
+    }
+}
 
 #[cfg(test)]
 mod hevc_tests {
