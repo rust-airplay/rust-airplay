@@ -64,6 +64,19 @@ does it is the reason it is written down this precisely here.
 Frames leave the media path as Annex-B access units. A client that sends its parameter sets
 separately gets them prepended to the frame they belong to.
 
+## Flushing and pausing
+
+A client that sends `FLUSH` is saying the picture it is about to send is not the one on
+screen: after a pause, a seek, or a switch of media. The queued frames are stale, so the
+queue is emptied and its generation bumped; the writer owns the renderer's stream and notices
+the generation, which is how a backend that had already taken a frame is told to drop it.
+
+A mirroring client also says when it stops and resumes, in the option of a codec packet
+(`0x56`/`0x5e` stop, `0x16`/`0x1e` resume, `raop_rtp_mirror.c:580-586`). That is not the same
+as a quiet stream: the picture on screen is the one it stopped on. The receiver drops the
+queued frames and reports the transition; a backend that wants to freeze its window has the
+signal to do it.
+
 ## Keeping audio and video together
 
 A mirroring client sends two streams with timestamps that have nothing in common. A mirror

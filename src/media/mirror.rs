@@ -762,6 +762,21 @@ struct Pending {
 /// reach into the renderer's types.
 pub use crate::render::VideoCodec;
 
+/// What a mirror stream says about itself while it runs.
+///
+/// A codec packet carries the coding, the picture geometry and whether the client is
+/// paused; all three are session state rather than frame state, and a caller that opens a
+/// backend stream needs them together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamInfo {
+    /// The coding the stream carries.
+    pub codec: VideoCodec,
+    /// The geometry the last codec packet announced, when it announced one.
+    pub geometry: Option<Geometry>,
+    /// Whether the client said it stopped sending video.
+    pub paused: bool,
+}
+
 /// Why a codec configuration packet could not be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecDataError {
@@ -1006,6 +1021,8 @@ pub struct MirrorSession {
     codec: CodecConfig,
     /// The picture geometry the last codec packet announced.
     geometry: Option<Geometry>,
+    /// Whether the client said it stopped sending video, from the codec packet's option.
+    paused: bool,
     /// Frames handed out so far, which is what a caller reports to say the stream
     /// is alive.
     frames: u64,
@@ -1236,6 +1253,7 @@ impl MirrorSession {
             decryptor: MirrorDecryptor::new(keys)?,
             codec: CodecConfig::new(),
             geometry: None,
+            paused: false,
             frames: 0,
             dropped: std::sync::Arc::new(PacketCensus::default()),
         })
@@ -1250,6 +1268,7 @@ impl MirrorSession {
     pub fn rekey(&mut self, keys: &StreamKeys) -> Result<(), crate::crypto::CryptoError> {
         self.codec = CodecConfig::new();
         self.geometry = None;
+        self.paused = false;
         self.decryptor.rekey(keys)
     }
 
@@ -1257,6 +1276,26 @@ impl MirrorSession {
     /// What this session did with the packets that were not frames.
     pub fn census(&self) -> std::sync::Arc<PacketCensus> {
         std::sync::Arc::clone(&self.dropped)
+    }
+
+    /// Whether the client said it stopped sending video.
+    ///
+    /// A mirroring client that stops, or an app that covers the screen, sends a codec
+    /// packet whose option says so (`raop_rtp_mirror.c:580-586`); a receiver that ignores
+    /// it keeps a frozen picture on screen as if the stream were merely quiet.
+    #[must_use]
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Everything the stream has said about itself.
+    #[must_use]
+    pub fn info(&self) -> StreamInfo {
+        StreamInfo {
+            codec: self.codec(),
+            geometry: self.geometry,
+            paused: self.paused,
+        }
     }
 
     /// The picture geometry the stream announced, once its configuration packet arrived.
@@ -1307,6 +1346,14 @@ impl MirrorSession {
                 // as fatal: the client sends another when the format changes.
                 self.dropped.count(PacketKind::Codec);
                 self.geometry = header.geometry.or(self.geometry);
+                // The option's first byte says whether the stream stopped or resumed:
+                // `0x56`/`0x5e` stop it, `0x16`/`0x1e` start it again
+                // (`raop_rtp_mirror.c:580-586`).
+                match (header.option >> 8) as u8 {
+                    0x56 | 0x5e => self.paused = true,
+                    0x16 | 0x1e => self.paused = false,
+                    _ => {}
+                }
                 let _ = self.codec.codec_data(header.timestamp, payload);
                 Ok(None)
             }
@@ -1410,6 +1457,34 @@ fn hex_preview(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod pause_tests {
+    use super::{HEADER_LEN, MirrorSession, parse_header, stream_keys};
+
+    fn codec_packet(option: u8) -> Vec<u8> {
+        let mut packet = vec![0u8; HEADER_LEN];
+        // A codec packet is the first byte pair 0x01, 0x00, and its option says whether
+        // the stream stopped or resumed (`raop_rtp_mirror.c:580-586`).
+        packet[4] = 0x01;
+        packet[5] = 0x00;
+        packet[6] = option;
+        packet
+    }
+
+    #[test]
+    fn a_codec_packet_reports_pause_and_resume() {
+        let keys = stream_keys(1, &[0x11; 16]);
+        let mut session = MirrorSession::new(&keys).expect("a session");
+        assert!(!session.paused());
+        for (option, paused) in [(0x56u8, true), (0x16, false), (0x5e, true), (0x1e, false)] {
+            let packet = codec_packet(option);
+            let header = parse_header(&packet).expect("a header");
+            let _ = session.receive(&header, &[]);
+            assert_eq!(session.paused(), paused, "option {option:#04x}");
+        }
+    }
+}
 
 #[cfg(test)]
 mod geometry_tests {

@@ -407,11 +407,7 @@ impl MirrorStream {
         &mut self,
         session: &mut super::mirror::MirrorSession,
         mut on_packet: impl FnMut(&super::mirror::MirrorHeader, usize),
-        mut on_frame: impl FnMut(
-            super::mirror::VideoFrame,
-            crate::render::VideoCodec,
-            Option<super::mirror::Geometry>,
-        ),
+        mut on_frame: impl FnMut(super::mirror::VideoFrame, super::mirror::StreamInfo),
     ) -> Result<(), ServeError> {
         while let Some((header, payload)) = self.read_packet().await? {
             // Every packet, before it is interpreted: a mirror stream is a byte
@@ -420,7 +416,7 @@ impl MirrorStream {
             // different problems.
             on_packet(&header, payload.len());
             match session.receive(&header, &payload) {
-                Ok(Some(frame)) => on_frame(frame, session.codec(), session.geometry()),
+                Ok(Some(frame)) => on_frame(frame, session.info()),
                 Ok(None) => {}
                 // A frame that cannot be read is upstream's "invalid frame", which it
                 // marks and passes on rather than ending the connection

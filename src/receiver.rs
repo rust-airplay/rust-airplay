@@ -98,6 +98,8 @@ struct Frames {
     ended: bool,
     /// How many frames were dropped to keep the queue at its depth.
     dropped: u64,
+    /// Bumped by a flush, so the writer knows the frames it was about to show are stale.
+    generation: u64,
 }
 
 impl FreshestFrames {
@@ -112,6 +114,27 @@ impl FreshestFrames {
     ///
     /// Returns how many are waiting afterwards, so a caller can report a depth without
     /// asking a second question.
+    /// Drops every frame waiting and tells the writer the picture starts over.
+    ///
+    /// A client sends `FLUSH` when what it played is no longer what it is about to play,
+    /// and the frames queued here are the old picture. The generation is what reaches the
+    /// writer, because it owns the renderer's stream: dropping the queue without telling
+    /// it would leave the backend showing the frames it had already taken.
+    fn clear(&self) -> u64 {
+        let mut state = lock(&self.state);
+        state.queued.clear();
+        state.generation += 1;
+        let generation = state.generation;
+        drop(state);
+        self.ready.notify_one();
+        generation
+    }
+
+    /// The generation a flush left behind, for a writer that has to notice it.
+    fn generation(&self) -> u64 {
+        lock(&self.state).generation
+    }
+
     fn put(&self, frame: QueuedVideo) -> usize {
         let mut state = lock(&self.state);
         if state.ended {
@@ -126,6 +149,12 @@ impl FreshestFrames {
         drop(state);
         self.ready.notify_one();
         depth
+    }
+
+    /// Takes the next frame if one is waiting, without blocking.
+    #[cfg(test)]
+    fn try_take(&self) -> Option<QueuedVideo> {
+        lock(&self.state).queued.pop_front()
     }
 
     /// Takes the next frame, waiting until there is one or the queue has ended.
@@ -759,6 +788,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // `FLUSH` reaching any control connection can clear that session's window.
     let audio_flush: Arc<Mutex<Option<crate::media::audio::FlushHandle>>> =
         Arc::new(Mutex::new(None));
+    // The video queue a `FLUSH` has to empty, published by whichever mirror session is
+    // running. A receiver has one, so a single slot is enough.
+    let video_flush: Arc<Mutex<Option<Arc<FreshestFrames>>>> = Arc::new(Mutex::new(None));
     // The client's clock, as the timing exchange establishes it. Written by the exchange
     // and read by anything that has to know when a client timestamp happens here.
     let clock = Arc::new(Mutex::new(crate::media::timing::RemoteClock::new()));
@@ -1025,6 +1057,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let mirror_stop = stopping.clone();
     let mirror_probe = Arc::clone(&probe);
     let pace_video = config.pace_video;
+    let video_flush_task = Arc::clone(&video_flush);
     tokio::spawn(async move {
         // The listener accepts from the moment the receiver is up, which is not the
         // moment it has keys: a device may open the mirror connection before the
@@ -1123,6 +1156,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
             // because a channel does not say: it is the number that decides whether a
             // picture is being kept up with or dropped.
             let feed = std::sync::Arc::new(FreshestFrames::new());
+            if let Ok(mut slot) = video_flush_task.lock() {
+                *slot = Some(Arc::clone(&feed));
+            }
             let queued = std::sync::Arc::clone(&feed);
             let opening_writer = opening;
             let writer_renderer = Arc::clone(&mirror_renderer);
@@ -1134,6 +1170,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     // established: consecutive frames differed by 143156808 of them.
                     let mut pacer =
                         crate::media::pace::Pacer::new(crate::media::pace::Ticks::NtpFixed);
+                    // A flush is the client saying the picture it is about to send is not
+                    // the one on screen; the writer is where that reaches the renderer.
+                    let mut flushed = queued.generation();
                     while let Some((data, timestamp, idr, received, codec, geometry)) =
                         queued.take()
                     {
@@ -1208,6 +1247,14 @@ pub async fn run(config: Config) -> Result<(), Error> {
                         let Some(video) = video.as_mut() else {
                             return 0;
                         };
+                        if queued.generation() != flushed {
+                            flushed = queued.generation();
+                            if let Err(error) = video.flush() {
+                                log::warn!(
+                                    "rust-airplay: the video stream would not flush: {error}"
+                                );
+                            }
+                        }
                         if let Err(error) = video.push(crate::VideoFrame {
                             data,
                             timestamp,
@@ -1338,6 +1385,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     }
                 }
             });
+            let paused_feed = std::sync::Arc::clone(&feed);
+            let mut was_paused = false;
             let outcome = stream
                 .serve(
                     &mut session,
@@ -1349,8 +1398,21 @@ pub async fn run(config: Config) -> Result<(), Error> {
                         // reads it as it stands. A copy per packet would be a copy of
                         // something the reporter can already see.
                     },
-                    |frame, codec, geometry| {
+                    |frame, info| {
                     frames += 1;
+                    // A paused client is not a quiet one: the picture on screen is the one
+                    // it stopped on, and the frames queued behind it are from a stream
+                    // that is not advancing. Upstream calls its renderer's pause here
+                    // (`raop_rtp_mirror.c:580-586`); dropping the queue is what this
+                    // crate can do without asking a backend to freeze a window.
+                    if info.paused != was_paused {
+                        was_paused = info.paused;
+                        paused_feed.clear();
+                        log::info!(
+                            "media     the client {} video",
+                            if info.paused { "paused" } else { "resumed" }
+                        );
+                    }
                     frames_out.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if frames == 1 {
                         log::info!(
@@ -1401,8 +1463,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
                         frame.timestamp,
                         frame.idr,
                         received,
-                        codec,
-                        geometry,
+                        info.codec,
+                        info.geometry,
                     ));
                     if refused == 0 && depth >= QUEUED_FRAMES {
                         refused = 1;
@@ -1481,10 +1543,19 @@ pub async fn run(config: Config) -> Result<(), Error> {
                 // A flush carries the sequence the client wants to resume at, so a
                 // handler can flush the session that is already playing.
                 let flushing = Arc::clone(&audio_flush);
+                let video_flushing = Arc::clone(&video_flush);
                 handlers.set_flush_callback(move |next| {
                     log::info!("media     the client flushed, resuming at sequence {next}");
                     if let Some(handle) = flushing.lock().ok().and_then(|slot| slot.clone()) {
                         handle.request(next);
+                    }
+                    // The picture on screen is the one the client is leaving behind, and
+                    // the frames queued for it are the same. Dropping them is what a flush
+                    // means; the writer notices the generation and flushes its stream.
+                    let queue = video_flushing.lock().ok().and_then(|slot| slot.clone());
+                    if let Some(queue) = queue {
+                        let generation = queue.clear();
+                        log::info!("media     video queue flushed (generation {generation})");
                     }
                 });
                 let media_key = Arc::clone(&media_key);
@@ -1666,7 +1737,38 @@ pub async fn run(config: Config) -> Result<(), Error> {
 }
 #[cfg(test)]
 mod tests {
-    use super::ClockProbe;
+    use super::{ClockProbe, FreshestFrames, QueuedVideo};
+
+    fn frame(timestamp: u64) -> QueuedVideo {
+        (
+            vec![0u8; 4],
+            timestamp,
+            true,
+            0,
+            crate::render::VideoCodec::H264,
+            None,
+        )
+    }
+
+    #[test]
+    fn a_flush_drops_what_was_queued_and_tells_the_writer() {
+        // `FLUSH` is the client saying the picture it is about to send is not the one on
+        // screen. The writer owns the renderer's stream, so it has to be told too - that is
+        // what the generation is for.
+        let queue = FreshestFrames::new();
+        assert_eq!(queue.put(frame(1)), 1);
+        assert_eq!(queue.put(frame(2)), 2);
+        let before = queue.generation();
+
+        let after = queue.clear();
+        assert_eq!(after, before + 1, "a flush is one generation");
+        assert_eq!(queue.generation(), after);
+        // Nothing is left to take, and the queue is not ended: frames after a flush are
+        // the ones that should play.
+        assert!(queue.try_take().is_none());
+        assert_eq!(queue.put(frame(3)), 1);
+        assert!(queue.try_take().is_some());
+    }
 
     #[test]
     fn a_ninety_kilohertz_video_clock_is_recognised() {
