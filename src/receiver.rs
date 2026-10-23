@@ -242,6 +242,12 @@ pub struct Config {
     /// from `Audio-Latency`: too small and every packet is late, too large and the stream
     /// starts late. The default is upstream's quarter of a second.
     pub audio_latency: std::time::Duration,
+    /// Which clients may start a session.
+    ///
+    /// Upstream's `-restrict`, `-allow` and `-block`. The policy is checked in `SETUP`,
+    /// where the client has named itself and before any key is derived; a refused client
+    /// is answered `403 Forbidden`.
+    pub client_policy: crate::server::ClientPolicy,
     /// The feature bitmap advertised, when the caller has one of its own.
     ///
     /// `None` advertises [`crate::server::DEFAULT_FEATURES`], which is what upstream's
@@ -1394,6 +1400,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // The callback outlives the configuration it arrived in, and a handler set is built per
     // connection, so it is captured once here rather than reached for through `config`.
     let on_client = config.on_client.clone();
+    let client_policy = config.client_policy.clone();
     let result = server
         .run(move || {
             let log = trace_log.clone();
@@ -1402,6 +1409,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
             // The ports this run actually listens on, so a client is told where
             // to send instead of guessing.
             handlers.set_setup_ports(setup_ports);
+            handlers.set_client_policy(client_policy.clone());
             // A session that carries a verified client key is a client worth
             // remembering, so the next run can answer for it.
             {

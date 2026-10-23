@@ -28,6 +28,9 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-o` | overscan 显示 | `Config::display.overscanned` |
 | `-h265` | 允许 HEVC 并提供 4K | `Config::features` 置第 42 位，且 `Config::display` 为 3840x2160；默认尺寸由程序决定 |
 | `-hls`（仅 feature 位） | 告知客户端支持 HLS | `Config::features` 置第 4 位；路由本身仍返回 `501` |
+| `-restrict` | 只允许名单中的设备 | `Config::client_policy.restrict` |
+| `-allow <deviceID>` | 允许的设备 | `Config::client_policy.allow` |
+| `-block <deviceID>` | 永远拒绝的设备 | `Config::client_policy.block` |
 | `-vol <v>` | 会话起始音量 | `Config::initial_volume` |
 | `-as ...` | 音频 sink | 后端的 `Options::audio_sink` |
 | `-vs ...` | 视频 sink | 后端的 `Options::video_sink` |
@@ -67,7 +70,6 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | --- | --- | --- |
 | `-reset n` | 无反馈 n 秒后重置 | `Config::client_timeout` |
 | `-nohold` | 新客户端顶掉当前连接 | `Config::single_client` |
-| `-restrict`、`-allow`、`-block` | 客户端白/黑名单 | `Config::client_policy` |
 | `-vsync`、`-async` | 时间戳同步模式 | `Config::sync` |
 | `-db`、`-taper` | 音量曲线 | `Config::volume_curve` |
 | `-ca`、`-md` | 封面图与元数据 | `Config` 上的回调 |

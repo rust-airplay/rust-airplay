@@ -43,6 +43,7 @@ let config = Config {
     audio_latency: std::time::Duration::from_millis(250),
     initial_volume: rust_airplay::Volume::FULL,
     features: None,
+    client_policy: rust_airplay::server::ClientPolicy::default(),
     display: rust_airplay::server::Display::default(),
 };
 

@@ -290,6 +290,54 @@ pub struct DeviceIdentity {
     pub txt_raop: Option<Vec<u8>>,
 }
 
+/// Who a client says it is, read from its `SETUP` request.
+///
+/// Upstream hands these three values to its `report_client_request` callback and lets the
+/// program decide whether the session proceeds (`raop_handlers.h:756-767`). They are what
+/// `-restrict`, `-allow` and `-block` match against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientRequest {
+    /// The `deviceID` the client sent, which is its hardware address.
+    pub device_id: String,
+    /// The `model` the client sent, when it sent one.
+    pub model: String,
+    /// The `name` the client sent, when it sent one.
+    pub name: String,
+}
+
+/// Which clients may start a session.
+///
+/// This is upstream's `-restrict`, `-allow` and `-block` together. A blocked device is
+/// always refused; when `restrict` is set, only an allowed device is admitted; otherwise
+/// everything that is not blocked is. A device identifier is the one a client sends as
+/// `deviceID`, the same string a receiver stores when it remembers a pairing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClientPolicy {
+    /// Admit only the devices in [`ClientPolicy::allow`].
+    pub restrict: bool,
+    /// Device identifiers that are admitted when `restrict` is set.
+    pub allow: Vec<String>,
+    /// Device identifiers that are never admitted.
+    pub block: Vec<String>,
+}
+
+impl ClientPolicy {
+    /// Whether a client may start a session.
+    #[must_use]
+    pub fn admits(&self, client: &ClientRequest) -> bool {
+        // A block wins over everything: restricting a list and then blocking a member of
+        // it is a caller saying "not this one", and the narrower permission is the safer
+        // reading.
+        if self.block.iter().any(|id| id == &client.device_id) {
+            return false;
+        }
+        if self.restrict {
+            return self.allow.iter().any(|id| id == &client.device_id);
+        }
+        true
+    }
+}
+
 /// The display a receiver offers a client in `GET /info`.
 ///
 /// This is upstream's `-s wxh@r`, `-fps` and `-o` set together: a client reads them from
@@ -386,6 +434,8 @@ pub struct RouteHandlers {
     /// and a normal run does not.
     debug_setup: bool,
     setup: Option<Box<dyn FnMut(SetupRequest) + Send>>,
+    /// Which clients may start a session.
+    client_policy: ClientPolicy,
     parameter: Option<Box<dyn FnMut(SetParameter) + Send>>,
     trace: Option<TraceCallback>,
     authenticated: bool,
@@ -409,6 +459,7 @@ impl RouteHandlers {
             peer: None,
             debug_setup: std::env::var("AIRPLAY_DEBUG_SETUP").is_ok(),
             setup: None,
+            client_policy: ClientPolicy::default(),
             parameter: None,
             trace: None,
             authenticated: false,
@@ -468,6 +519,16 @@ impl RouteHandlers {
     /// The identity these handlers advertise.
     pub fn identity(&self) -> &DeviceIdentity {
         &self.identity
+    }
+
+    /// Sets which clients may start a session.
+    ///
+    /// Upstream consults its `report_client_request` callback in the middle of `SETUP`
+    /// (`raop_handlers.h:756-767`) and drops the connection when it refuses; this answers
+    /// `403 Forbidden` instead, because a client that could not be admitted should be told
+    /// that rather than left with a closed socket.
+    pub fn set_client_policy(&mut self, policy: ClientPolicy) {
+        self.client_policy = policy;
     }
 
     /// Sets the callback reported for `POST /feedback`.
@@ -614,6 +675,24 @@ impl RouteHandlers {
         let Ok(body) = Plist::parse(request.body) else {
             return RouteReply::new(400, "Bad Request");
         };
+
+        // Who is asking decides whether there is a session at all. Upstream consults its
+        // callback at the same point, after the password gate and before it derives keys
+        // (`raop_handlers.h:756-767`).
+        let client = ClientRequest {
+            device_id: body.get_string("deviceID").unwrap_or_default().to_owned(),
+            model: body.get_string("model").unwrap_or_default().to_owned(),
+            name: body.get_string("name").unwrap_or_default().to_owned(),
+        };
+        if !self.client_policy.admits(&client) {
+            log::info!(
+                "media     refused {} ({}, model {})",
+                client.name,
+                client.device_id,
+                client.model
+            );
+            return RouteReply::new(403, "Forbidden");
+        }
 
         // `raop_handlers.h:785-798`: both keys are read as fixed-size buffers
         // there, without looking at the length the client sent.

@@ -60,10 +60,10 @@ use tokio::sync::Semaphore;
 use crate::control::RouteHandler;
 
 pub use handlers::{
-    AUDIO_OUTPUT_FORMATS, DEFAULT_FEATURES, DEFAULT_HEIGHT, DEFAULT_MAX_FPS, DEFAULT_MODEL,
-    DEFAULT_PI, DEFAULT_REFRESH_RATE, DEFAULT_SOURCE_VERSION, DEFAULT_VV, DEFAULT_WIDTH,
-    DISPLAY_FEATURES, DISPLAY_UUID, DeviceIdentity, Display, RouteHandlers, STATUS_FLAGS,
-    SetParameter, SetupPorts, SetupRequest, SetupStream,
+    AUDIO_OUTPUT_FORMATS, ClientPolicy, ClientRequest, DEFAULT_FEATURES, DEFAULT_HEIGHT,
+    DEFAULT_MAX_FPS, DEFAULT_MODEL, DEFAULT_PI, DEFAULT_REFRESH_RATE, DEFAULT_SOURCE_VERSION,
+    DEFAULT_VV, DEFAULT_WIDTH, DISPLAY_FEATURES, DISPLAY_UUID, DeviceIdentity, Display,
+    RouteHandlers, STATUS_FLAGS, SetParameter, SetupPorts, SetupRequest, SetupStream,
 };
 pub use pairing::{
     MAX_PIN_FAILURES, OsRandom, PairingError, PairingState, PinMode, RandomError, RandomSource,

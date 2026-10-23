@@ -145,6 +145,83 @@ fn the_advertised_features_are_the_identitys() {
 }
 
 #[test]
+fn a_blocked_client_is_never_admitted() {
+    let policy = super::ClientPolicy {
+        restrict: true,
+        allow: vec!["aa:bb:cc:dd:ee:ff".to_owned()],
+        block: vec!["aa:bb:cc:dd:ee:ff".to_owned()],
+    };
+    let client = super::ClientRequest {
+        device_id: "aa:bb:cc:dd:ee:ff".to_owned(),
+        model: "iPad".to_owned(),
+        name: "Test".to_owned(),
+    };
+    assert!(
+        !policy.admits(&client),
+        "a block wins over an allow: the narrower permission is the safer reading"
+    );
+}
+
+#[test]
+fn a_restrict_policy_admits_only_what_it_lists() {
+    let policy = super::ClientPolicy {
+        restrict: true,
+        allow: vec!["aa:bb:cc:dd:ee:ff".to_owned()],
+        block: Vec::new(),
+    };
+    let admitted = super::ClientRequest {
+        device_id: "aa:bb:cc:dd:ee:ff".to_owned(),
+        model: String::new(),
+        name: String::new(),
+    };
+    let refused = super::ClientRequest {
+        device_id: "11:22:33:44:55:66".to_owned(),
+        ..admitted.clone()
+    };
+    assert!(policy.admits(&admitted));
+    assert!(!policy.admits(&refused));
+    // Without restrict, a policy with no block list admits everything.
+    let open = super::ClientPolicy::default();
+    assert!(open.admits(&refused));
+}
+
+#[test]
+fn a_refused_client_gets_403_before_any_key_is_derived() {
+    // Upstream drops the connection when its callback refuses; a client deserves an answer
+    // that says so. The body here is a mirror-only SETUP, which needs no keys, so the
+    // refusal is the only thing that can decide the reply.
+    let mut handlers = RouteHandlers::new(DeviceIdentity::default());
+    handlers.set_client_policy(super::ClientPolicy {
+        restrict: true,
+        allow: Vec::new(),
+        block: vec!["aa:bb:cc:dd:ee:ff".to_owned()],
+    });
+    let mut request_body = plist::Dictionary::new();
+    request_body.insert(
+        "deviceID".to_owned(),
+        plist::Value::from("aa:bb:cc:dd:ee:ff"),
+    );
+    request_body.insert("model".to_owned(), plist::Value::from("iPad"));
+    request_body.insert("name".to_owned(), plist::Value::from("Test"));
+    let encoded = Plist::from_value(plist::Value::Dictionary(request_body))
+        .encode_binary()
+        .unwrap();
+    let (head, body) = parse(
+        "SETUP /stream",
+        "CSeq: 1
+Content-Type: application/x-apple-binary-plist
+",
+        &encoded,
+    );
+    let reply = handlers.setup(&RouteRequest {
+        head: &head,
+        body: &body,
+        peer: None,
+    });
+    assert_eq!(reply.status, 403);
+}
+
+#[test]
 fn info_answers_only_the_requested_txt_record() {
     let mut identity = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Test", Vec::new());
     identity.txt_airplay = Some(b"txt".to_vec());
