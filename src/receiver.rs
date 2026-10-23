@@ -331,6 +331,12 @@ pub struct Config {
     /// matches, so this is how a receiver asks for a smaller picture or a lower frame
     /// rate without touching the stream afterwards.
     pub display: crate::server::Display,
+    /// Whether the client's streaming reports are written to the log.
+    ///
+    /// Upstream's `-FPSdata`. A report is a binary plist a mirroring client sends once a
+    /// second; it says how the client itself thinks the stream is going, which is the one
+    /// view of performance this receiver cannot measure.
+    pub log_streaming_reports: bool,
     /// How a client's slider position becomes a gain.
     ///
     /// Upstream's `-taper` and `-db`. The default is the flat `-30..0` decibel mapping.
@@ -519,6 +525,31 @@ impl ClockProbe {
         }
     }
 }
+/// A streaming report as a person can read it.
+///
+/// A report is a binary plist, so it is written out as XML; one that does not parse is
+/// summarised as bytes, because a report a receiver cannot read is still evidence that the
+/// client is sending something.
+fn describe_report(payload: &[u8]) -> String {
+    const PREVIEW: usize = 2_048;
+    let text = match crate::plist::Plist::parse(payload).and_then(|plist| plist.encode_xml()) {
+        Ok(xml) => String::from_utf8_lossy(&xml).into_owned(),
+        Err(_) => {
+            let shown: Vec<String> = payload
+                .iter()
+                .take(32)
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            format!("{} bytes, not a plist: {}", payload.len(), shown.join(" "))
+        }
+    };
+    if text.chars().count() > PREVIEW {
+        text.chars().take(PREVIEW).collect()
+    } else {
+        text
+    }
+}
+
 /// The decibels a slider position means under `curve`.
 fn airplay_volume(fraction: f64, curve: crate::VolumeCurve) -> f64 {
     curve.db_for_fraction(fraction)
@@ -1101,6 +1132,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let mirror_stop = stopping.clone();
     let mirror_probe = Arc::clone(&probe);
     let pace_video = config.pace_video;
+    let log_reports = config.log_streaming_reports;
     let video_flush_task = Arc::clone(&video_flush);
     tokio::spawn(async move {
         // The listener accepts from the moment the receiver is up, which is not the
@@ -1206,6 +1238,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
             let queued = std::sync::Arc::clone(&feed);
             let opening_writer = opening;
             let writer_renderer = Arc::clone(&mirror_renderer);
+            let paused_signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let writer_paused = std::sync::Arc::clone(&paused_signal);
             let playing = {
                 std::thread::spawn(move || {
                     let mut shown: u64 = 0;
@@ -1217,6 +1251,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     // A flush is the client saying the picture it is about to send is not
                     // the one on screen; the writer is where that reaches the renderer.
                     let mut flushed = queued.generation();
+                    let mut paused = false;
                     while let Some((data, timestamp, idr, received, codec, geometry)) =
                         queued.take()
                     {
@@ -1291,6 +1326,22 @@ pub async fn run(config: Config) -> Result<(), Error> {
                         let Some(video) = video.as_mut() else {
                             return 0;
                         };
+                        // A pause is a state, not a frame: the writer owns the stream, so
+                        // the flag the receive loop sets is what reaches the backend.
+                        let wants_pause = writer_paused.load(std::sync::atomic::Ordering::Relaxed);
+                        if wants_pause != paused {
+                            paused = wants_pause;
+                            let result = if paused {
+                                video.pause()
+                            } else {
+                                video.resume()
+                            };
+                            if let Err(error) = result {
+                                log::warn!(
+                                    "rust-airplay: the video stream would not change state: {error}"
+                                );
+                            }
+                        }
                         if queued.generation() != flushed {
                             flushed = queued.generation();
                             if let Err(error) = video.flush() {
@@ -1434,10 +1485,17 @@ pub async fn run(config: Config) -> Result<(), Error> {
             let outcome = stream
                 .serve(
                     &mut session,
-                    |_header, bytes| {
+                    |header, bytes| {
                         received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         received_bytes
-                            .fetch_add(bytes as u64, std::sync::atomic::Ordering::Relaxed);
+                            .fetch_add(bytes.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                        // Upstream's `-FPSdata` prints the client's streaming reports, which
+                        // are binary plists sent once a second (`raop_rtp_mirror.c:800-824`).
+                        if log_reports
+                            && matches!(header.kind, crate::media::mirror::MirrorKind::StreamingReport)
+                        {
+                            log::info!("media     streaming report: {}", describe_report(bytes));
+                        }
                         // Nothing to do here: the census is shared, so the reporter
                         // reads it as it stands. A copy per packet would be a copy of
                         // something the reporter can already see.
@@ -1451,6 +1509,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     // crate can do without asking a backend to freeze a window.
                     if info.paused != was_paused {
                         was_paused = info.paused;
+                        paused_signal.store(info.paused, std::sync::atomic::Ordering::Relaxed);
                         paused_feed.clear();
                         log::info!(
                             "media     the client {} video",
@@ -1802,6 +1861,25 @@ pub async fn run(config: Config) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::{ClockProbe, FreshestFrames, QueuedVideo};
+
+    #[test]
+    fn a_streaming_report_is_written_out_as_xml() {
+        // Upstream prints these as XML when `-FPSdata` is on (`raop_rtp_mirror.c:816-821`);
+        // the point is that a person can read what the client says about its own stream.
+        let mut report = plist::Dictionary::new();
+        report.insert("fps".to_owned(), plist::Value::from(30u64));
+        let payload = crate::plist::Plist::from_value(plist::Value::Dictionary(report))
+            .encode_binary()
+            .expect("a report");
+        let text = super::describe_report(&payload);
+        assert!(text.contains("<key>fps</key>"), "{text}");
+        assert!(text.contains("<integer>30</integer>"), "{text}");
+
+        // Anything that is not a plist is still evidence, so it is summarised rather than
+        // silently dropped.
+        let text = super::describe_report(&[0xff, 0x00]);
+        assert!(text.contains("not a plist"), "{text}");
+    }
 
     fn frame(timestamp: u64) -> QueuedVideo {
         (

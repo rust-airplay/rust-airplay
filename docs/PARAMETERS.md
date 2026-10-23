@@ -38,6 +38,7 @@ Three surfaces are involved:
 | `-hls` (feature bit only) | tell clients HLS is supported | `Config::features` with bit 4 set; the routes themselves are still `501` |
 | `-nohold` | a new client takes over from the current one | `Config::nohold` |
 | `-reset n` | close a session with no feedback for n seconds | `Config::feedback_timeout` |
+| `-FPSdata` | show the client's streaming reports | `Config::log_streaming_reports` |
 | `-taper` | the tapered volume profile | `Config::volume_curve.taper` |
 | `-db l:h` | the decibel range the slider is rescaled onto | `Config::volume_curve.low_db` and `high_db` |
 | `-restrict` | admit only the devices in the allow list | `Config::client_policy.restrict` |
@@ -87,7 +88,6 @@ see the shape before the code exists.
 | `-vsync`, `-async` | timestamp synchronisation modes | `Config::sync` |
 | `-ca`, `-md` | cover art and metadata | callbacks on `Config` |
 | `-dacp [fn]` | export remote-control information | a callback on `Config` |
-| `-FPSdata` | show the client's streaming reports | `Config::trace_log` already carries them; a typed callback is planned |
 | `-mp4 [fn]` | record the session | not planned until the media path supports it |
 | `-lang`, `-slang`, `-custom`, `-rpi` | HTTP Live Streaming tuning | not planned until HLS exists |
 | `-p2p` | peer-to-peer discovery | not planned; `mdns-sd` has no peer-to-peer mode |

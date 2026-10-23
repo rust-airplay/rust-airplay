@@ -41,6 +41,7 @@ pub async fn run(config: Config) -> Result<(), Error>
 | `audio_latency` | `Duration` | 客户端据此排程的音频延迟，在 `RECORD` 的 `Audio-Latency` 中报告；对应上游 `-al`，范围 0 到 10 秒 |
 | `initial_volume` | `Volume` | 会话起始的滑块位置；对应上游 `-vol` |
 | `volume_curve` | `VolumeCurve` | 客户端的 dB 如何变成增益：平坦或 taper，`-30..0` 区间的重映射；对应上游 `-db` 与 `-taper` |
+| `log_streaming_reports` | `bool` | 把客户端每秒一次的流报告写入日志；对应上游 `-FPSdata` |
 | `features` | `Option<u64>` | 广播的 feature 位图；`None` 用默认值，第 42 位允许 HEVC，第 4 位宣称 HLS |
 | `display` | `server::Display` | 客户端从 `/info` 读到的尺寸、刷新率、帧率上限与 overscan；对应上游 `-s`、`-fps`、`-o` |
 | `client_policy` | `server::ClientPolicy` | 允许哪些客户端建立会话，在 `SETUP` 时判定；被拒绝的客户端收到 `403 Forbidden` |

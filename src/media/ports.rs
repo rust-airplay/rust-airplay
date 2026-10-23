@@ -406,7 +406,7 @@ impl MirrorStream {
     pub async fn serve(
         &mut self,
         session: &mut super::mirror::MirrorSession,
-        mut on_packet: impl FnMut(&super::mirror::MirrorHeader, usize),
+        mut on_packet: impl FnMut(&super::mirror::MirrorHeader, &[u8]),
         mut on_frame: impl FnMut(super::mirror::VideoFrame, super::mirror::StreamInfo),
     ) -> Result<(), ServeError> {
         while let Some((header, payload)) = self.read_packet().await? {
@@ -414,7 +414,7 @@ impl MirrorStream {
             // stream, so a caller that is only told about frames cannot tell "the
             // client stopped sending" from "we stopped reading", and those are
             // different problems.
-            on_packet(&header, payload.len());
+            on_packet(&header, &payload);
             match session.receive(&header, &payload) {
                 Ok(Some(frame)) => on_frame(frame, session.info()),
                 Ok(None) => {}

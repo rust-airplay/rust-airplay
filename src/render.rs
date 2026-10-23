@@ -405,6 +405,28 @@ pub trait VideoStream: fmt::Debug + Send + Sync {
     ///
     /// Returns [`RenderError`] when the backend cannot flush.
     fn flush(&self) -> Result<(), RenderError>;
+    /// Holds the picture where it is, when the client says it stopped sending.
+    ///
+    /// A mirroring client that stops, or an app that covers the screen, says so in a codec
+    /// packet (`raop_rtp_mirror.c:580-586`). A backend that owns a window can freeze it
+    /// here; the default does nothing, because a pipeline that simply stops receiving
+    /// frames already holds its last one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot hold the picture.
+    fn pause(&self) -> Result<(), RenderError> {
+        Ok(())
+    }
+
+    /// Starts the picture again after [`VideoStream::pause`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot resume.
+    fn resume(&self) -> Result<(), RenderError> {
+        Ok(())
+    }
 
     /// Ends the stream.
     ///
