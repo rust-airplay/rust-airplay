@@ -103,3 +103,16 @@ client connects, so a stream opens there instead of at full volume.
 Both are validated where they are set: an audio latency outside 0 to 10 seconds is refused
 when the receiver starts, which is what upstream does when it parses the option, and a
 renderer that refuses the volume is reported and the receiver goes on.
+
+## Not supported
+
+These are not planned, and the reason is a decision rather than missing time.
+
+| Upstream | Why not |
+| --- | --- |
+| `-hls`, `-lang`, `-slang`, `-custom`, `-rpi` | HTTP Live Streaming needs a player, a playlist fetcher and an event channel to the client; the receiver routes were removed rather than answered `200` while doing nothing, and the feature bits stay clear. |
+| `-mp4` | Recording needs the media path to keep a muxer and a file between sessions; the library owns neither a file nor a codec. |
+| `-p2p` | Apple peer-to-peer discovery has no equivalent in `mdns-sd`; the discovery layer would have to grow a second transport. |
+| `-scrsv` | A screensaver is the program's business, and this library is the program's library. |
+| `POST /reverse` | The event channel exists to carry HLS playlist requests from the receiver to the client. Without HLS there is nothing to carry, so the route answers `501` instead of holding open a socket that will never be written to. |
+| `-vsync`, `-async` | Both select a clock to synchronise against. This receiver anchors each stream on the arrival of its first frame and paces by the stream's own timestamps, which a device session showed keeps audio and video together without an absolute conversion; the exchange cannot supply one at finer than a second. |
