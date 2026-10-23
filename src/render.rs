@@ -146,6 +146,80 @@ impl VideoCodec {
     }
 }
 
+/// The volume an AirPlay client means by the number it sends.
+///
+/// A client states volume in decibels over `-30` to `0`, and `-144` is its mute signal
+/// (`uxplay.cpp:2803-2821`). A renderer wants a linear gain, so the two scales meet here:
+/// the fraction is how far up the slider the client is, and the curve turns that into the
+/// gain a sound card understands.
+pub fn airplay_db_to_fraction(db: f64) -> f64 {
+    const MUTE: f64 = -144.0;
+    const LOW_DB: f64 = -30.0;
+    const HIGH_DB: f64 = 0.0;
+    if db == MUTE || db <= LOW_DB {
+        return 0.0;
+    }
+    if db >= HIGH_DB {
+        return 1.0;
+    }
+    ((HIGH_DB - db) / (HIGH_DB - LOW_DB)).clamp(0.0, 1.0)
+}
+
+/// How a client's slider position becomes a gain.
+///
+/// This is upstream's `-db` and `-taper` together. Flat rescaled the `-30..0` decibel range
+/// onto `low_db..high_db`; tapered makes each halving of the remaining slider length a
+/// halving of loudness (ten decibels), which is how several AirPlay senders behave
+/// (`uxplay.cpp:2830-2846`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VolumeCurve {
+    /// Use the tapered profile rather than the flat one.
+    pub taper: bool,
+    /// Attenuation, in decibels, at the bottom of the slider.
+    pub low_db: f64,
+    /// Attenuation, in decibels, at the top of the slider.
+    pub high_db: f64,
+}
+
+impl Default for VolumeCurve {
+    fn default() -> Self {
+        Self {
+            taper: false,
+            low_db: -30.0,
+            high_db: 0.0,
+        }
+    }
+}
+
+impl VolumeCurve {
+    /// The decibels this curve gives a slider position.
+    #[must_use]
+    pub fn db_for_fraction(self, fraction: f64) -> f64 {
+        let fraction = fraction.clamp(0.0, 1.0);
+        if fraction <= 0.0 {
+            return self.low_db;
+        }
+        let flat = self.low_db + (self.high_db - self.low_db) * fraction;
+        if self.taper {
+            let tapered = self.high_db + 10.0 * fraction.log2();
+            // The taper is never quieter than the flat mapping at the same position.
+            tapered.max(flat)
+        } else {
+            flat
+        }
+    }
+
+    /// The linear gain a renderer plays at for a slider position.
+    #[must_use]
+    pub fn gain(self, fraction: f64) -> f64 {
+        if fraction <= 0.0 {
+            return 0.0;
+        }
+        // Decibels to a linear scale: `10 ** (0.05 * db)`.
+        10f64.powf(0.05 * self.db_for_fraction(fraction))
+    }
+}
+
 /// The volume a renderer plays at, from silence to full.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Volume(f64);
@@ -613,6 +687,37 @@ mod tests {
         assert_eq!(renderer.video_frames(), 1);
         assert_eq!(renderer.flushes(), 1);
         assert_eq!(renderer.closed(), 2);
+    }
+
+    #[test]
+    fn a_clients_decibels_are_where_the_slider_is() {
+        // -30 dB is silence, 0 dB is full volume, and -144 is the client's mute signal;
+        // anything below the low end is silence and anything above the high end is full.
+        assert_eq!(airplay_db_to_fraction(-144.0), 0.0);
+        assert_eq!(airplay_db_to_fraction(-30.0), 0.0);
+        assert_eq!(airplay_db_to_fraction(0.0), 1.0);
+        assert_eq!(airplay_db_to_fraction(5.0), 1.0);
+        assert!((airplay_db_to_fraction(-15.0) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_flat_curve_is_a_straight_line_and_the_taper_is_not() {
+        let flat = VolumeCurve::default();
+        assert!((flat.gain(1.0) - 1.0).abs() < 1e-9);
+        assert_eq!(flat.gain(0.0), 0.0);
+        // Half the slider flat: -15 dB, which is about 0.178 of the amplitude.
+        assert!((flat.gain(0.5) - 10f64.powf(-0.75)).abs() < 1e-12);
+        // Half the slider tapered: -10 dB, about 0.316.
+        let tapered = VolumeCurve {
+            taper: true,
+            ..VolumeCurve::default()
+        };
+        assert!((tapered.gain(0.5) - 10f64.powf(-0.5)).abs() < 1e-12);
+        // And the taper is never quieter than the flat curve at the same position.
+        for tenth in 0..=10 {
+            let fraction = f64::from(tenth) / 10.0;
+            assert!(tapered.db_for_fraction(fraction) >= flat.db_for_fraction(fraction));
+        }
     }
 
     #[test]

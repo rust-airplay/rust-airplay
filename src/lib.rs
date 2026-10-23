@@ -42,5 +42,5 @@ pub mod wire;
 pub use receiver::{Config, Error as ReceiverError, run};
 pub use render::{
     AudioCodec, AudioConfig, AudioFrame, AudioStream, NullRenderer, RenderError, Renderer,
-    VideoCodec, VideoConfig, VideoFrame, VideoStream, Volume,
+    VideoCodec, VideoConfig, VideoFrame, VideoStream, Volume, VolumeCurve, airplay_db_to_fraction,
 };

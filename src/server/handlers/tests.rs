@@ -233,7 +233,7 @@ fn a_volume_set_by_the_client_is_what_the_client_reads_back() {
         recorded.lock().expect("lock").push(parameter);
     });
 
-    let body = b"volume: 0.250000\r\n";
+    let body = b"volume: -15.000000\r\n";
     let (head, request_body) = parse(
         "SET_PARAMETER /volume",
         "CSeq: 1\r\nContent-Type: text/parameters\r\n",
@@ -253,7 +253,9 @@ fn a_volume_set_by_the_client_is_what_the_client_reads_back() {
     });
     assert_eq!(reply.status, 200, "reply status");
     match seen.lock().expect("lock").first() {
-        Some(super::SetParameter::Volume(level)) => assert!((level - 0.25).abs() < 1e-6),
+        Some(super::SetParameter::Volume(level)) => {
+            assert!((f64::from(*level) + 15.0).abs() < 1e-6)
+        }
         other => panic!("the callback saw {other:?}"),
     }
 
@@ -268,7 +270,7 @@ fn a_volume_set_by_the_client_is_what_the_client_reads_back() {
         peer: None,
     });
     let text = String::from_utf8_lossy(&reply.body);
-    assert!(text.contains("0.250000"), "answered {text:?}");
+    assert!(text.contains("-15.000000"), "answered {text:?}");
 }
 
 #[test]

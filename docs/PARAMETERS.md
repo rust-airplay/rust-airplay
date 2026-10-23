@@ -38,6 +38,8 @@ Three surfaces are involved:
 | `-hls` (feature bit only) | tell clients HLS is supported | `Config::features` with bit 4 set; the routes themselves are still `501` |
 | `-nohold` | a new client takes over from the current one | `Config::nohold` |
 | `-reset n` | close a session with no feedback for n seconds | `Config::feedback_timeout` |
+| `-taper` | the tapered volume profile | `Config::volume_curve.taper` |
+| `-db l:h` | the decibel range the slider is rescaled onto | `Config::volume_curve.low_db` and `high_db` |
 | `-restrict` | admit only the devices in the allow list | `Config::client_policy.restrict` |
 | `-allow <deviceID>` | a device that is admitted | `Config::client_policy.allow` |
 | `-block <deviceID>` | a device that is never admitted | `Config::client_policy.block` |
@@ -83,7 +85,6 @@ see the shape before the code exists.
 | Upstream | What it does | Planned surface |
 | --- | --- | --- |
 | `-vsync`, `-async` | timestamp synchronisation modes | `Config::sync` |
-| `-db`, `-taper` | volume curve | `Config::volume_curve` |
 | `-ca`, `-md` | cover art and metadata | callbacks on `Config` |
 | `-dacp [fn]` | export remote-control information | a callback on `Config` |
 | `-FPSdata` | show the client's streaming reports | `Config::trace_log` already carries them; a typed callback is planned |

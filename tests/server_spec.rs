@@ -747,7 +747,7 @@ async fn parameters_report_volume_and_progress_and_answer_451_without_a_content_
 
     // A volume and a progress line reach the session layer.
     for (body, expected) in [
-        (&b"volume: 0.25\r\n"[..], SetParameter::Volume(0.25)),
+        (&b"volume: -15.0\r\n"[..], SetParameter::Volume(-15.0)),
         (
             &b"progress: 1/2/3\r\n"[..],
             SetParameter::Progress {
@@ -816,7 +816,7 @@ async fn parameters_report_volume_and_progress_and_answer_451_without_a_content_
         .expect("response");
     let (head, body) = response_parts(&response);
     assert_eq!(header_value(head, "Content-Type"), Some("text/parameters"));
-    assert_eq!(body, b"volume:  0.250000\r\n");
+    assert_eq!(body, b"volume: -15.000000\r\n");
     server.shutdown();
 }
 

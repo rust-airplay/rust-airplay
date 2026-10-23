@@ -32,6 +32,8 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-hls`（仅 feature 位） | 告知客户端支持 HLS | `Config::features` 置第 4 位；路由本身仍返回 `501` |
 | `-nohold` | 新客户端顶替当前连接 | `Config::nohold` |
 | `-reset n` | 无反馈超过 n 秒就关闭会话 | `Config::feedback_timeout` |
+| `-taper` | 锥形音量曲线 | `Config::volume_curve.taper` |
+| `-db l:h` | 滑块重映射到的分贝范围 | `Config::volume_curve.low_db` 与 `high_db` |
 | `-restrict` | 只允许名单中的设备 | `Config::client_policy.restrict` |
 | `-allow <deviceID>` | 允许的设备 | `Config::client_policy.allow` |
 | `-block <deviceID>` | 永远拒绝的设备 | `Config::client_policy.block` |
@@ -73,7 +75,6 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | 上游参数 | 作用 | 计划中的接口 |
 | --- | --- | --- |
 | `-vsync`、`-async` | 时间戳同步模式 | `Config::sync` |
-| `-db`、`-taper` | 音量曲线 | `Config::volume_curve` |
 | `-ca`、`-md` | 封面图与元数据 | `Config` 上的回调 |
 | `-dacp [fn]` | 导出遥控信息 | `Config` 上的回调 |
 | `-FPSdata` | 显示客户端的流报告 | `Config::trace_log` 已包含这些；类型化回调是计划 |

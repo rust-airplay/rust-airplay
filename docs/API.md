@@ -47,7 +47,8 @@ instead of a hidden default. The library reads no environment variable and opens
 | `dump_audio` | `Option<PathBuf>` | when set, audio payloads are appended here behind a length |
 | `pace_video` | `bool` | whether mirror video is held back to its capture spacing. Off by default: a mirror is judged by how quickly it follows the device |
 | `audio_latency` | `Duration` | the audio delay a client schedules against, reported in `Audio-Latency` on `RECORD`; upstream's `-al`, from 0 to 10 seconds |
-| `initial_volume` | `Volume` | the level the renderer is set to before a client connects; upstream's `-vol` |
+| `initial_volume` | `Volume` | the slider position a session starts at; upstream's `-vol` |
+| `volume_curve` | `VolumeCurve` | how a client's decibels become a gain: flat or tapered, with the `-30..0` range rescaled; upstream's `-db` and `-taper` |
 | `features` | `Option<u64>` | the advertised feature bitmap; `None` keeps the default, bit 42 allows HEVC and bit 4 claims HLS |
 | `display` | `server::Display` | the size, refresh rate, frame cap and overscan a client reads from `/info`; upstream's `-s`, `-fps` and `-o` |
 | `client_policy` | `server::ClientPolicy` | which clients may start a session, checked in `SETUP`; a refused client is answered `403 Forbidden` |

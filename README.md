@@ -48,6 +48,7 @@ let config = Config {
     pace_video: false,
     audio_latency: std::time::Duration::from_millis(250),
     initial_volume: rust_airplay::Volume::FULL,
+    volume_curve: rust_airplay::VolumeCurve::default(),
     features: None,
     client_policy: rust_airplay::server::ClientPolicy::default(),
     ports: rust_airplay::media::ports::MediaPorts::automatic(),

@@ -331,6 +331,10 @@ pub struct Config {
     /// matches, so this is how a receiver asks for a smaller picture or a lower frame
     /// rate without touching the stream afterwards.
     pub display: crate::server::Display,
+    /// How a client's slider position becomes a gain.
+    ///
+    /// Upstream's `-taper` and `-db`. The default is the flat `-30..0` decibel mapping.
+    pub volume_curve: crate::VolumeCurve,
     /// The volume a session starts at.
     ///
     /// Upstream's `-vol`. The renderer is told once, before any client connects, so a
@@ -515,6 +519,11 @@ impl ClockProbe {
         }
     }
 }
+/// The decibels a slider position means under `curve`.
+fn airplay_volume(fraction: f64, curve: crate::VolumeCurve) -> f64 {
+    curve.db_for_fraction(fraction)
+}
+
 /// The longest a frame may be held back to keep a stream at its capture spacing.
 ///
 /// A client sends a second of mirror frames in a few tens of milliseconds, so pacing them
@@ -604,7 +613,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
         refresh_rate: config.display.refresh_rate,
         max_fps: config.display.max_fps,
         overscanned: config.display.overscanned,
-        initial_volume: config.initial_volume.level(),
+        initial_volume: airplay_volume(config.initial_volume.fraction(), config.volume_curve),
         ..DeviceIdentity::new(&device_id, &config.name, public_key.to_vec())
     };
     let protection = match (config.pin, &config.password) {
@@ -614,8 +623,10 @@ pub async fn run(config: Config) -> Result<(), Error> {
     };
 
     // The volume is set once, before a session opens: a renderer is told what level to
-    // start at rather than being corrected after the first frame.
-    if let Err(error) = config.renderer.set_volume(config.initial_volume) {
+    // start at rather than being corrected after the first frame. A client's `-vol` is a
+    // slider position, so the curve is what turns it into a gain.
+    let initial_gain = config.volume_curve.gain(config.initial_volume.fraction());
+    if let Err(error) = config.renderer.set_volume(crate::Volume::new(initial_gain)) {
         log::warn!("rust-airplay: the renderer would not take the initial volume: {error}");
     }
     // Upstream validates the same range when it parses `-al` (`uxplay.cpp:1954-1966`).
@@ -1545,6 +1556,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // A client changes the volume with `SET_PARAMETER volume:`; the renderer is where a
     // volume means anything, so the two are connected here.
     let volume_renderer = Arc::clone(&config.renderer);
+    let volume_curve = config.volume_curve;
     let result = server
         .run(move || {
             let log = trace_log.clone();
@@ -1557,10 +1569,16 @@ pub async fn run(config: Config) -> Result<(), Error> {
             {
                 let renderer = Arc::clone(&volume_renderer);
                 handlers.set_parameter_callback(move |parameter| {
-                    if let crate::server::SetParameter::Volume(level) = parameter {
-                        let volume = crate::Volume::new(f64::from(level));
-                        log::info!("media     the client set the volume to {level:.3}");
-                        if let Err(error) = renderer.set_volume(volume) {
+                    if let crate::server::SetParameter::Volume(db) = parameter {
+                        // The client sends decibels: -30 is silence, 0 is full, and -144
+                        // is its mute signal.
+                        let fraction = crate::airplay_db_to_fraction(f64::from(db));
+                        let gain = volume_curve.gain(fraction);
+                        log::info!(
+                            "media     the client set the volume to {db:.1} dB ({:.0}%)",
+                            fraction * 100.0
+                        );
+                        if let Err(error) = renderer.set_volume(crate::Volume::new(gain)) {
                             log::warn!("rust-airplay: the renderer refused a volume: {error}");
                         }
                     }

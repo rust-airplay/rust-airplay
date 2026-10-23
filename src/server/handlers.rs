@@ -152,7 +152,11 @@ pub struct SetupRequest {
 /// media layer is a later stage reports them instead of pretending to act.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SetParameter {
-    /// `volume: <value>`: the volume the client asked for.
+    /// `volume: <value>`: the volume the client asked for, in decibels.
+    ///
+    /// A client states `-30` for silence and `0` for full volume, and `-144` for mute
+    /// (`uxplay.cpp:2803-2821`). It is not a fraction, and a receiver that read it as one
+    /// would mute every client that lowered its volume at all.
     Volume(f32),
     /// `progress: <start>/<current>/<end>`, in seconds.
     Progress {
@@ -461,7 +465,7 @@ impl RouteHandlers {
     /// The pairing routes answer `501 Not Implemented` until a caller adds
     /// [`PairingState`] with [`RouteHandlers::with_pairing`].
     pub fn new(identity: DeviceIdentity) -> Self {
-        let identity_volume = identity.initial_volume.clamp(0.0, 1.0);
+        let identity_volume = identity.initial_volume;
         Self {
             identity,
             fairplay: FairPlaySession::new(),
@@ -983,8 +987,17 @@ impl RouteHandlers {
         if let Some(SetParameter::Volume(level)) = parameter {
             // The client's value is what the receiver plays at from here on, and what it
             // answers with when asked; upstream does the same through its renderer.
+            // The scale is decibels: -30 is silence and 0 is full, and a value outside it
+            // is clamped the way upstream clamps it. `-144` is the client's mute signal and
+            // is kept as sent, because it is what `GET_PARAMETER` reports back.
+            let value = f64::from(level);
+            let db = if value == -144.0 {
+                -144.0
+            } else {
+                value.clamp(-30.0, 0.0)
+            };
             if let Ok(mut volume) = self.client_volume.lock() {
-                *volume = f64::from(level).clamp(0.0, 1.0);
+                *volume = db;
             }
         }
         if let Some(parameter) = parameter {
