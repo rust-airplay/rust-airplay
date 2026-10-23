@@ -81,29 +81,11 @@ this crate:
 | `-key [fn]`, `-reg [fn]` | where the seed and the client list are stored | the program decides; `parlor-cli` keeps both under the user's application data directory |
 | `-d` | log level and format | the program's logger |
 
-## Planned
+## Where this leaves the table
 
-These are mapped but not implemented. The names are what `Config` will gain, so a caller can
-see the shape before the code exists.
-
-| Upstream | What it does | Planned surface |
-| --- | --- | --- |
-| `-vsync`, `-async` | timestamp synchronisation modes | `Config::sync` |
-| `-mp4 [fn]` | record the session | not planned until the media path supports it |
-| `-lang`, `-slang`, `-custom`, `-rpi` | HTTP Live Streaming tuning | not planned until HLS exists |
-| `-p2p` | peer-to-peer discovery | not planned; `mdns-sd` has no peer-to-peer mode |
-| `-scrsv` | screensaver policy | client policy |
-
-## What this release adds
-
-`Config::audio_latency` and `Config::initial_volume` are new. The first is upstream's `-al`:
-the delay a client schedules its own playback against, reported in `Audio-Latency` on
-`RECORD`. The second is upstream's `-vol`: the renderer is told the level once, before a
-client connects, so a stream opens there instead of at full volume.
-
-Both are validated where they are set: an audio latency outside 0 to 10 seconds is refused
-when the receiver starts, which is what upstream does when it parses the option, and a
-renderer that refuses the volume is reported and the receiver goes on.
+Every upstream option is now in exactly one place: implemented on a library value, a backend
+option, a program decision, or the not-supported list below with a reason. There is no
+"planned" tier left to read as a promise.
 
 ## Not supported
 
