@@ -1,0 +1,621 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! What a renderer has to accept, and a renderer that accepts everything.
+//!
+//! Upstream splits the work in two: `lib/` receives the media and `renderers/` is a
+//! sub-project of its own that decodes and plays it, with the application wiring the
+//! two together (`upstream/UxPlay@3dbf7cee:renderers/`). [`docs/ARCHITECTURE.md`] took the
+//! same shape for this crate and deferred the exact interface to the moment the first
+//! renderer landed: this crate is that moment.
+//!
+//! The interface exists so that a media backend can be replaced without touching the
+//! protocol, and so that a backend can be tested without a decoder. Nothing here
+//! decodes, allocates a device or links a media library: a backend is a crate of its
+//! own, and [`NullRenderer`] is the one that always works.
+//!
+//! [`docs/ARCHITECTURE.md`]: ../../../docs/ARCHITECTURE.md
+
+use std::fmt;
+
+/// The audio coding a stream carries.
+///
+/// `SETUP` does not say which one a client picked; what says it is the stream's own
+/// compression type, which this crate does not read yet, so a caller has to be told
+/// which one it has. Getting it wrong is not silent: a decoder fed one kind of frame
+/// as another fails, which is why the choice is a parameter and not a default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioCodec {
+    /// Apple Lossless, which is what AirPlay 1 clients send.
+    Alac,
+    /// MPEG-4 AAC Enhanced Low Delay, which is what a mirroring client sends
+    /// alongside its video.
+    AacEld,
+}
+
+impl AudioCodec {
+    /// Every coding this receiver can decode.
+    ///
+    /// The `cn` record in the mDNS text record is built from this list, so a client is
+    /// only offered codings that a renderer here can actually take. The list is short on
+    /// purpose: a receiver that advertises PCM or plain AAC and then feeds those frames
+    /// to an ELD decoder produces noise, and a client has no way to notice.
+    pub const ALL: [Self; 2] = [Self::Alac, Self::AacEld];
+
+    /// The number this coding is known by in the `cn` record.
+    ///
+    /// `0` is PCM, `1` ALAC, `2` AAC and `3` AAC-ELD
+    /// (`upstream/UxPlay/lib/dnssdint.h`, `RAOP_CN`).
+    #[must_use]
+    pub fn codec_number(self) -> u8 {
+        match self {
+            Self::Alac => 1,
+            Self::AacEld => 3,
+        }
+    }
+
+    /// The name GStreamer and FFmpeg know this coding by, which a backend needs for
+    /// its pipeline and a log needs to be readable.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Alac => "alac",
+            Self::AacEld => "aac-eld",
+        }
+    }
+}
+
+/// What an audio stream is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AudioConfig {
+    /// The coding of its frames.
+    pub codec: AudioCodec,
+    /// Samples a second, which AirPlay sends at 44.1 kHz.
+    pub sample_rate: u32,
+    /// Channels per frame.
+    pub channels: u8,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            codec: AudioCodec::Alac,
+            sample_rate: 44_100,
+            channels: 2,
+        }
+    }
+}
+
+/// What a video stream is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoConfig {
+    /// Width in pixels, when the client has said.
+    pub width: Option<u32>,
+    /// Height in pixels, when the client has said.
+    pub height: Option<u32>,
+    /// The coding the frames will be in.
+    ///
+    /// A backend has to know this before it chooses a decoder: `h264parse` cannot read an
+    /// HEVC unit and an HEVC decoder cannot read H.264, and a stream that picks the wrong
+    /// one shows nothing at all rather than something wrong. The core decrypts and frames
+    /// the stream but does not decode it, so this is part of the contract between them.
+    pub codec: VideoCodec,
+}
+
+/// The coding a mirror stream carries.
+///
+/// A client sends one of the two and does not change mid-session, and the two need
+/// different parsers and decoders. Upstream keeps the same distinction as a flag
+/// (`upstream/UxPlay/lib/raop_rtp_mirror.c:195`, `h265_video`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VideoCodec {
+    /// H.264, which is what every client sends unless told otherwise.
+    #[default]
+    H264,
+    /// HEVC, which a 4K-capable client sends when the receiver asks for it.
+    H265,
+}
+
+impl VideoCodec {
+    /// The name GStreamer and FFmpeg know this coding by.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::H264 => "h264",
+            Self::H265 => "h265",
+        }
+    }
+}
+
+/// The volume a renderer plays at, from silence to full.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Volume(f64);
+
+impl Volume {
+    /// Full volume, which is what a session starts at: a client that says nothing
+    /// about volume is not asking for silence.
+    pub const FULL: Self = Self(1.0);
+
+    /// The volume as a number from `0.0` to `1.0`, which is what a backend's own volume
+    /// control takes.
+    #[must_use]
+    pub fn fraction(self) -> f64 {
+        self.0
+    }
+
+    /// A volume, clamped to the range a client can ask for.
+    ///
+    /// AirPlay sends volume in decibels, where `0` is full scale and lower values are
+    /// quieter; a value above full scale is not something to pass on to a device.
+    #[must_use]
+    pub fn new(level: f64) -> Self {
+        if level.is_nan() {
+            return Self::FULL;
+        }
+        Self(level.clamp(0.0, 1.0))
+    }
+
+    /// The level, from zero to one.
+    pub fn level(self) -> f64 {
+        self.0
+    }
+}
+
+impl Default for Volume {
+    fn default() -> Self {
+        Self::FULL
+    }
+}
+
+/// One audio frame, coded as its stream's codec.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioFrame {
+    /// The coded frame, as it arrived.
+    pub data: Vec<u8>,
+    /// The client's timestamp for it, in the remote clock the session is on. A renderer
+    /// that plays in step with video needs it; one that plays audio alone may ignore
+    /// it.
+    pub timestamp: u64,
+}
+
+/// One video frame, in Annex-B form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoFrame {
+    /// The frame's units, each behind an `00 00 00 01` start code.
+    pub data: Vec<u8>,
+    /// The client's timestamp, which is the wall-clock time the frame belongs to.
+    pub timestamp: u64,
+    /// Whether this is a key frame, which a decoder needs to start.
+    pub keyframe: bool,
+}
+
+/// Why a renderer refused to open, or stopped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenderError {
+    /// The backend is not available on this machine, with what is missing.
+    ///
+    /// A missing decoder or sink is an environment problem, not a protocol one
+    /// ([the architecture document](../../../docs/ARCHITECTURE.md)), so it is reported
+    /// rather than worked around: a receiver that silently plays nothing is worse
+    /// than one that says why.
+    Unavailable(String),
+    /// The backend failed at something it was asked to do.
+    Failed(String),
+}
+
+impl fmt::Display for RenderError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unavailable(reason) => write!(formatter, "the renderer is unavailable: {reason}"),
+            Self::Failed(reason) => write!(formatter, "the renderer failed: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for RenderError {}
+
+/// What renders a session's media.
+///
+/// A backend implements this; the application injects it; the protocol core never sees
+/// it (the architecture document rule 2). The two streams are separate because a session can have one
+/// without the other — an audio-only client never opens a video stream — and because
+/// two backends can serve one session, one per stream (the architecture document rule 4).
+///
+/// Every method takes `&self` rather than `&mut self` so that a session can hold the
+/// renderer while its receive loop holds the streams; a backend that needs mutable
+/// state keeps it behind its own lock, which is also what lets a real one be driven
+/// from a media thread while the protocol thread reads it.
+pub trait Renderer: fmt::Debug + Send + Sync {
+    /// Prepares to render an audio stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot serve this configuration, which
+    /// a caller reports and a session continues without audio.
+    fn open_audio(&self, config: AudioConfig) -> Result<Box<dyn AudioStream>, RenderError>;
+
+    /// Prepares to render a video stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot serve this configuration.
+    fn open_video(&self, config: VideoConfig) -> Result<Box<dyn VideoStream>, RenderError>;
+
+    /// Sets the volume every stream plays at.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot apply it.
+    fn set_volume(&self, volume: Volume) -> Result<(), RenderError>;
+}
+
+/// An open audio stream.
+pub trait AudioStream: fmt::Debug + Send + Sync {
+    /// Hands one frame to the backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot take it, which a caller reports
+    /// and the session continues: one frame a decoder refuses is not a reason to drop
+    /// a client.
+    fn push(&self, frame: AudioFrame) -> Result<(), RenderError>;
+
+    /// Drops what has not been played, as a flush or a seek does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot flush.
+    fn flush(&self) -> Result<(), RenderError>;
+
+    /// Ends the stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot close it cleanly.
+    fn close(&self) -> Result<(), RenderError>;
+}
+
+/// An open video stream.
+pub trait VideoStream: fmt::Debug + Send + Sync {
+    /// Hands one frame to the backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot take it.
+    fn push(&self, frame: VideoFrame) -> Result<(), RenderError>;
+
+    /// Says when the next frame belongs, so a backend can play at the rate a
+    /// client sent rather than as fast as it can read.
+    ///
+    /// This matters more than it looks. A mirror stream is one key frame followed
+    /// by frames that only describe how the picture *changed*, so a receiver that
+    /// decodes faster than real time loses frames the rest of the stream depends
+    /// on, and nothing in a later frame can repair that — the picture stays partly
+    /// wrong for the whole session. A backend that simply reads as fast as it can
+    /// therefore shows a picture that is only partly decoded, which is exactly what
+    /// one did until this existed.
+    ///
+    /// The default does nothing, because a backend that decodes on its own schedule
+    /// (or plays nothing) has no use for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot apply it.
+    fn set_pace(&self, until_next_seconds: f64) -> Result<(), RenderError> {
+        let _ = until_next_seconds;
+        Ok(())
+    }
+
+    /// Drops what has not been played.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot flush.
+    fn flush(&self) -> Result<(), RenderError>;
+
+    /// Ends the stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] when the backend cannot close it cleanly.
+    fn close(&self) -> Result<(), RenderError>;
+}
+
+/// A renderer that accepts everything and plays nothing.
+///
+/// It exists for the two jobs a fake is for: a session can run end to end without a
+/// media library ([`docs/ARCHITECTURE.md`] asks for exactly that), and a backend can be
+/// compared against a known-good consumer of the interface.
+///
+/// What it counts is what a test asserts on, and a count is all it is: no timestamps
+/// are ordered and no frame is decoded, so it says nothing about whether what arrived
+/// would play.
+///
+/// [`docs/ARCHITECTURE.md`]: ../../../docs/ARCHITECTURE.md
+#[derive(Debug, Default)]
+pub struct NullRenderer {
+    audio: std::sync::Arc<Counters>,
+    video: std::sync::Arc<Counters>,
+    volume: std::sync::Mutex<Volume>,
+}
+
+/// What one stream of [`NullRenderer`] has been handed.
+#[derive(Debug, Default)]
+struct Counters {
+    opened: std::sync::atomic::AtomicUsize,
+    frames: std::sync::atomic::AtomicUsize,
+    bytes: std::sync::atomic::AtomicUsize,
+    flushed: std::sync::atomic::AtomicUsize,
+    closed: std::sync::atomic::AtomicUsize,
+}
+
+impl NullRenderer {
+    /// A renderer that has rendered nothing yet.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Audio streams opened so far.
+    pub fn audio_streams(&self) -> usize {
+        self.audio.opened.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Audio frames handed to it so far.
+    pub fn audio_frames(&self) -> usize {
+        self.audio.frames.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Audio bytes handed to it so far.
+    pub fn audio_bytes(&self) -> usize {
+        self.audio.bytes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Video streams opened so far.
+    pub fn video_streams(&self) -> usize {
+        self.video.opened.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Video frames handed to it so far.
+    pub fn video_frames(&self) -> usize {
+        self.video.frames.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Flushes a stream of either kind has been asked for.
+    pub fn flushes(&self) -> usize {
+        self.audio
+            .flushed
+            .load(std::sync::atomic::Ordering::Relaxed)
+            + self
+                .video
+                .flushed
+                .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Streams of either kind that have been closed.
+    pub fn closed(&self) -> usize {
+        self.audio.closed.load(std::sync::atomic::Ordering::Relaxed)
+            + self.video.closed.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The volume its streams play at.
+    pub fn volume(&self) -> Volume {
+        *self
+            .volume
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl Renderer for NullRenderer {
+    fn open_audio(&self, _config: AudioConfig) -> Result<Box<dyn AudioStream>, RenderError> {
+        self.audio
+            .opened
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(Box::new(NullAudio {
+            counters: std::sync::Arc::clone(&self.audio),
+        }))
+    }
+
+    fn open_video(&self, _config: VideoConfig) -> Result<Box<dyn VideoStream>, RenderError> {
+        self.video
+            .opened
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(Box::new(NullVideo {
+            counters: std::sync::Arc::clone(&self.video),
+        }))
+    }
+
+    fn set_volume(&self, volume: Volume) -> Result<(), RenderError> {
+        *self
+            .volume
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = volume;
+        Ok(())
+    }
+}
+
+/// One audio stream of [`NullRenderer`].
+struct NullAudio {
+    counters: std::sync::Arc<Counters>,
+}
+
+impl fmt::Debug for NullAudio {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NullAudio")
+            .field(
+                "frames",
+                &self
+                    .counters
+                    .frames
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            )
+            .finish()
+    }
+}
+
+impl AudioStream for NullAudio {
+    fn push(&self, frame: AudioFrame) -> Result<(), RenderError> {
+        self.counters
+            .frames
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.counters
+            .bytes
+            .fetch_add(frame.data.len(), std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), RenderError> {
+        self.counters
+            .flushed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn close(&self) -> Result<(), RenderError> {
+        self.counters
+            .closed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+/// One video stream of [`NullRenderer`].
+struct NullVideo {
+    counters: std::sync::Arc<Counters>,
+}
+
+impl fmt::Debug for NullVideo {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NullVideo")
+            .field(
+                "frames",
+                &self
+                    .counters
+                    .frames
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            )
+            .finish()
+    }
+}
+
+impl VideoStream for NullVideo {
+    fn push(&self, frame: VideoFrame) -> Result<(), RenderError> {
+        self.counters
+            .frames
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.counters
+            .bytes
+            .fetch_add(frame.data.len(), std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), RenderError> {
+        self.counters
+            .flushed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn close(&self) -> Result<(), RenderError> {
+        self.counters
+            .closed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn volume_is_clamped_to_what_a_device_can_play() {
+        assert_eq!(Volume::default(), Volume::FULL);
+        assert_eq!(Volume::new(0.5).level(), 0.5);
+        assert_eq!(
+            Volume::new(-1.0).level(),
+            0.0,
+            "a client cannot ask for less"
+        );
+        assert_eq!(Volume::new(4.0).level(), 1.0, "nor for more");
+        assert_eq!(
+            Volume::new(f64::NAN).level(),
+            1.0,
+            "a volume that is not a number is not silence"
+        );
+    }
+
+    #[test]
+    fn the_null_renderer_takes_what_a_session_sends_it() {
+        let renderer = NullRenderer::new();
+        renderer.set_volume(Volume::new(0.25)).expect("a volume");
+        assert_eq!(renderer.volume().level(), 0.25);
+
+        let audio = renderer
+            .open_audio(AudioConfig::default())
+            .expect("an audio stream");
+        audio
+            .push(AudioFrame {
+                data: vec![0u8; 100],
+                timestamp: 1,
+            })
+            .expect("a frame");
+        audio
+            .push(AudioFrame {
+                data: vec![0u8; 50],
+                timestamp: 2,
+            })
+            .expect("another");
+        audio.flush().expect("a flush");
+        audio.close().expect("a close");
+
+        let video = renderer
+            .open_video(VideoConfig {
+                width: Some(1920),
+                height: Some(1080),
+                codec: VideoCodec::H264,
+            })
+            .expect("a video stream");
+        video
+            .push(VideoFrame {
+                data: vec![0u8; 200],
+                timestamp: 3,
+                keyframe: true,
+            })
+            .expect("a frame");
+        video.close().expect("a close");
+
+        assert_eq!(renderer.audio_streams(), 1);
+        assert_eq!(renderer.audio_frames(), 2);
+        assert_eq!(renderer.audio_bytes(), 150);
+        assert_eq!(renderer.video_streams(), 1);
+        assert_eq!(renderer.video_frames(), 1);
+        assert_eq!(renderer.flushes(), 1);
+        assert_eq!(renderer.closed(), 2);
+    }
+
+    #[test]
+    fn the_two_streams_of_one_renderer_are_counted_apart() {
+        // A session can have audio without video and the other way round, so a backend
+        // that shared one counter between them could not be checked against what a
+        // client actually sent.
+        let renderer = NullRenderer::new();
+        let audio = renderer
+            .open_audio(AudioConfig {
+                codec: AudioCodec::AacEld,
+                sample_rate: 44_100,
+                channels: 1,
+            })
+            .expect("audio");
+        audio
+            .push(AudioFrame {
+                data: vec![1, 2, 3],
+                timestamp: 0,
+            })
+            .expect("a frame");
+        assert_eq!(renderer.audio_frames(), 1);
+        assert_eq!(renderer.video_frames(), 0);
+        assert_eq!(renderer.video_streams(), 0);
+        assert_eq!(AudioCodec::AacEld.name(), "aac-eld");
+        assert_eq!(AudioCodec::Alac.name(), "alac");
+    }
+}

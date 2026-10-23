@@ -1,0 +1,10 @@
+/target/
+# The reference checkout the differential tests build against; not vendored.
+/upstream/
+# Built by the oracle scripts.
+/tools/oracle/oracle.exe
+*.pcap*
+*.key
+*.pem
+*.mp4
+/Cargo.lock
