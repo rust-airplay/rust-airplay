@@ -242,6 +242,13 @@ pub struct Config {
     /// from `Audio-Latency`: too small and every packet is late, too large and the stream
     /// starts late. The default is upstream's quarter of a second.
     pub audio_latency: std::time::Duration,
+    /// The display a client is offered in `GET /info`.
+    ///
+    /// Upstream's `-s wxh@r`, `-fps` and `-o` together. A client reads the size, the
+    /// refresh interval and the frame cap from there and sends a mirror stream that
+    /// matches, so this is how a receiver asks for a smaller picture or a lower frame
+    /// rate without touching the stream afterwards.
+    pub display: crate::server::Display,
     /// The volume a session starts at.
     ///
     /// Upstream's `-vol`. The renderer is told once, before any client connects, so a
@@ -508,7 +515,15 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let state = Arc::new(state);
     let public_key = state.identity_public();
 
-    let identity = DeviceIdentity::new(&device_id, &config.name, public_key.to_vec());
+    let identity = DeviceIdentity {
+        width: config.display.width,
+        height: config.display.height,
+        refresh_rate: config.display.refresh_rate,
+        max_fps: config.display.max_fps,
+        overscanned: config.display.overscanned,
+        initial_volume: config.initial_volume.level(),
+        ..DeviceIdentity::new(&device_id, &config.name, public_key.to_vec())
+    };
     let protection = match (config.pin, &config.password) {
         (PinMode::Disabled, None) => Protection::None,
         (PinMode::Disabled, Some(_)) => Protection::Password,

@@ -290,6 +290,38 @@ pub struct DeviceIdentity {
     pub txt_raop: Option<Vec<u8>>,
 }
 
+/// The display a receiver offers a client in `GET /info`.
+///
+/// This is upstream's `-s wxh@r`, `-fps` and `-o` set together: a client reads them from
+/// the `displays` array and sizes and paces the mirror stream it sends. A receiver that
+/// does not care takes [`Display::default`], which is upstream's own default of 1920x1080
+/// at 60 Hz, thirty frames a second, not overscanned.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Display {
+    /// Width in pixels.
+    pub width: u64,
+    /// Height in pixels.
+    pub height: u64,
+    /// Refresh rate in hertz, sent as the interval `1 / refresh_rate`.
+    pub refresh_rate: f64,
+    /// Highest frame rate the client should send.
+    pub max_fps: u64,
+    /// Whether the picture is overscanned.
+    pub overscanned: bool,
+}
+
+impl Default for Display {
+    fn default() -> Self {
+        Self {
+            width: DEFAULT_WIDTH,
+            height: DEFAULT_HEIGHT,
+            refresh_rate: DEFAULT_REFRESH_RATE,
+            max_fps: DEFAULT_MAX_FPS,
+            overscanned: false,
+        }
+    }
+}
+
 impl DeviceIdentity {
     /// Creates an identity for `device_id` and `name` that carries `public_key`
     /// and keeps every other upstream default.

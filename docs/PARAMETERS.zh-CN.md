@@ -23,6 +23,9 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-reg [fn]` | 已配对客户端的名单 | `Config::clients` 与 `Config::on_client` |
 | `-p n` | 控制端口 | `Config::port` |
 | `-al x` | 报告给客户端的音频延迟 | `Config::audio_latency` |
+| `-s wxh@r` | 提供给客户端的显示尺寸、刷新率与帧率上限 | `Config::display` |
+| `-fps n` | 要求客户端的最高帧率 | `Config::display.max_fps` |
+| `-o` | overscan 显示 | `Config::display.overscanned` |
 | `-vol <v>` | 会话起始音量 | `Config::initial_volume` |
 | `-as ...` | 音频 sink | 后端的 `Options::audio_sink` |
 | `-vs ...` | 视频 sink | 后端的 `Options::video_sink` |
@@ -42,7 +45,7 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-vc ...` | 视频转换器 | 属于 `Options::video_decoder` |
 | `-v4l2`、`-bt709`、`-srgb` | 平台解码与色彩 | 管线字符串，尚未暴露 |
 | `-f {H,V,I}`、`-r {R,L}` | 翻转与旋转 | 尚未暴露 |
-| `-o`、`-fs` | overscan、全屏 | sink 属性，尚未暴露 |
+| `-fs` | 全屏 | sink 属性，尚未暴露 |
 | `-vs 0`、`-as 0`、`-a` | 不要视频窗口、不要音频 | `--render null`，或后端里的空 sink |
 | `-vrtp`、`-artp` | 把解码后的流再打包发往别处 | 未实现 |
 | `-nc`、`-nofreeze` | 会话结束后窗口的处理 | 未实现 |
@@ -61,8 +64,6 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | 上游参数 | 作用 | 计划中的接口 |
 | --- | --- | --- |
 | `-h265` | 请求 HEVC 与 4K | `Config::video_codec`（feature 位与流的编码） |
-| `-s wxh@r` | 向客户端请求显示尺寸 | `Config::requested_size` |
-| `-fps n` | 限制镜像帧率 | `Config::max_fps` |
 | `-reset n` | 无反馈 n 秒后重置 | `Config::client_timeout` |
 | `-nohold` | 新客户端顶掉当前连接 | `Config::single_client` |
 | `-restrict`、`-allow`、`-block` | 客户端白/黑名单 | `Config::client_policy` |

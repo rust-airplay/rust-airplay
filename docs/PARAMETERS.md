@@ -29,6 +29,9 @@ Three surfaces are involved:
 | `-reg [fn]` | the register of clients already paired | `Config::clients` and `Config::on_client` |
 | `-p n` | the control port | `Config::port` |
 | `-al x` | audio delay reported to the client | `Config::audio_latency` |
+| `-s wxh@r` | the display size, refresh rate and frame cap a client is offered | `Config::display` |
+| `-fps n` | the highest frame rate asked of the client | `Config::display.max_fps` |
+| `-o` | overscanned display | `Config::display.overscanned` |
 | `-vol <v>` | the volume a session starts at | `Config::initial_volume` |
 | `-as ...` | the audio sink | `Options::audio_sink` in the backend |
 | `-vs ...` | the video sink | `Options::video_sink` |
@@ -71,8 +74,6 @@ see the shape before the code exists.
 | Upstream | What it does | Planned surface |
 | --- | --- | --- |
 | `-h265` | request HEVC and 4K | `Config::video_codec` (feature bits and the stream's coding) |
-| `-s wxh@r` | ask the client for a display size | `Config::requested_size` |
-| `-fps n` | cap the mirror framerate | `Config::max_fps` |
 | `-reset n` | reset after n seconds without feedback | `Config::client_timeout` |
 | `-nohold` | a new client replaces the current one | `Config::single_client` |
 | `-restrict`, `-allow`, `-block` | client allow and block lists | `Config::client_policy` |

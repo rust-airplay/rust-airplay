@@ -55,6 +55,74 @@ fn info_answers_the_full_device_record() {
 }
 
 #[test]
+fn the_offered_display_comes_from_the_identity() {
+    // Upstream's `-s wxh@r`, `-fps` and `-o`: a client reads these from `displays` and
+    // sends a mirror stream that matches, so a receiver that offers a smaller picture has
+    // to say so here rather than drop frames afterwards.
+    let mut identity = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Test", Vec::new());
+    identity.width = 1280;
+    identity.height = 720;
+    identity.refresh_rate = 30.0;
+    identity.max_fps = 24;
+    identity.overscanned = true;
+    let handlers = RouteHandlers::new(identity);
+    let (head, body) = parse(
+        "GET /info",
+        "CSeq: 1
+",
+        &[],
+    );
+    let reply = info_reply(&handlers, &head, &body);
+
+    let parsed = Plist::parse(&reply.body).unwrap();
+    let display = parsed
+        .get_dictionary("displays")
+        .or_else(|_| {
+            parsed
+                .get_array("displays")
+                .map(|array| array[0].as_dictionary().unwrap())
+        })
+        .unwrap();
+    assert_eq!(
+        display.get("width").unwrap().as_unsigned_integer(),
+        Some(1280)
+    );
+    assert_eq!(
+        display.get("height").unwrap().as_unsigned_integer(),
+        Some(720)
+    );
+    assert_eq!(
+        display.get("widthPixels").unwrap().as_unsigned_integer(),
+        Some(1280)
+    );
+    assert_eq!(
+        display.get("heightPixels").unwrap().as_unsigned_integer(),
+        Some(720)
+    );
+    assert_eq!(
+        display.get("maxFPS").unwrap().as_unsigned_integer(),
+        Some(24)
+    );
+    assert_eq!(display.get("overscanned").unwrap().as_boolean(), Some(true));
+    // The refresh rate is sent as the interval, which is what upstream does.
+    let interval = display.get("refreshRate").unwrap().as_real();
+    assert!(
+        interval.is_some_and(|value| (value - 1.0 / 30.0).abs() < 1e-9),
+        "interval {interval:?}"
+    );
+}
+
+#[test]
+fn the_default_display_is_upstreams() {
+    let display = super::Display::default();
+    assert_eq!(display.width, DEFAULT_WIDTH);
+    assert_eq!(display.height, DEFAULT_HEIGHT);
+    assert_eq!(display.refresh_rate, DEFAULT_REFRESH_RATE);
+    assert_eq!(display.max_fps, DEFAULT_MAX_FPS);
+    assert!(!display.overscanned);
+}
+
+#[test]
 fn info_answers_only_the_requested_txt_record() {
     let mut identity = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Test", Vec::new());
     identity.txt_airplay = Some(b"txt".to_vec());
