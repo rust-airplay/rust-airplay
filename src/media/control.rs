@@ -27,14 +27,14 @@ const CONTROL_MARKER: u8 = 0x80;
 /// Type of a resend request, before the marker bit is added
 const TYPE_RESEND_REQUEST: u8 = 0x55;
 
-/// Type of a resent audio packet (`raop_rtp.c`, the `0x56` branch).
+/// Type of a resent audio packet.
 const TYPE_RESENT_AUDIO: u8 = 0x56;
 
-/// Type of a sync packet (`raop_rtp.c`, the `0x54` branch).
+/// Type of a sync packet.
 const TYPE_SYNC: u8 = 0x54;
 
 /// Where a resent audio packet carries the audio packet itself
-/// (`raop_rtp.c`, `resent_packet = &packet[4]`).
+///.
 const RESENT_OFFSET: usize = 4;
 
 /// A control packet this receiver understands.

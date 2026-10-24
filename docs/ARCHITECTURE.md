@@ -73,7 +73,7 @@ queue is emptied and its generation bumped; the writer owns the renderer's strea
 the generation, which is how a backend that had already taken a frame is told to drop it.
 
 A mirroring client also says when it stops and resumes, in the option of a codec packet
-(`0x56`/`0x5e` stop, `0x16`/`0x1e` resume, `raop_rtp_mirror.c:580-586`). That is not the same
+(`0x56`/`0x5e` stop, `0x16`/`0x1e` resume). That is not the same
 as a quiet stream: the picture on screen is the one it stopped on. The receiver drops the
 queued frames and reports the transition; a backend that wants to freeze its window has the
 signal to do it.

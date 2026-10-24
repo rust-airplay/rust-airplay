@@ -726,7 +726,7 @@ async fn parameters_report_volume_and_progress_and_answer_451_without_a_content_
     let mut pending = Vec::new();
 
     // Both routes refuse a request that does not say what it carries
-    // (raop_handlers.h:1135-1139 and :1079-1083).
+    //.
     for method in ["SET_PARAMETER", "GET_PARAMETER"] {
         client
             .write_all(&request_with_body(

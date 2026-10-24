@@ -754,8 +754,7 @@ impl ControlSession {
 
     /// Sets the audio delay reported by `RECORD` in `Audio-Latency`.
     ///
-    /// The accepted range is `0..=`[`MAX_AUDIO_DELAY_MICROS`]
-    ///; validating configuration input is
+    /// The accepted range is `0..=MAX_AUDIO_DELAY_MICROS`; validating configuration input is
     /// the configuration layer's job, and this stores the value as given.
     pub fn set_audio_delay_micros(&mut self, micros: u32) {
         self.audio_delay_micros = micros;

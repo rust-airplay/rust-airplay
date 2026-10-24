@@ -14,7 +14,7 @@
 //! receiver with, and `sf`/`pw` say whether a PIN or a password is expected.
 //! A receiver that advertises one thing and answers another is undiscoverable in
 //! practice, so the field list, the fixed values and the `pk` all mirror
-//! `dnssdint.h` and `dnssd.c` rather than being invented here.
+//! and rather than being invented here.
 
 use std::collections::HashMap;
 
@@ -65,11 +65,9 @@ impl Protection {
     /// `pw` value of both records.
     ///
     /// A **password** and nothing else. A client reads these fields to decide whether it
-    /// needs a credential, and AirPlay advertises `pw=false` on a receiver that asks
-    /// clients to pair with a PIN — its own comment separates the two
-    /// (: "1: use onscreen pin ... 2 or 3: require
-    /// password"). Pairing is a protocol step; a password is access control. Saying `true`
-    /// here told clients that a receiver with no password had one.
+    /// needs a credential, and AirPlay advertises `pw=false` on a receiver that asks clients
+    /// to pair with a PIN, because pairing is a protocol step and a password is access
+    /// control. Saying `true` here told clients that a receiver with no password had one.
     fn password_required(self) -> &'static str {
         match self {
             Self::None | Self::Pin => "false",

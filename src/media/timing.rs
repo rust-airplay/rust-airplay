@@ -45,7 +45,7 @@ const REQUEST_HEADER: [u8; 4] = [0x80, 0xd2, 0x00, 0x07];
 const REQUEST_TRANSMIT_OFFSET: usize = 24;
 
 /// Type of a timing response, which is a request whose type bit changed
-/// (`raop_ntp.c:580` and the branch that reads the answer).
+///.
 pub const RESPONSE_TYPE: u8 = 0x53;
 
 /// Where a response carries the three values the protocol reads

@@ -1965,7 +1965,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     // connection identifier the client chose, and a device sends
                     // those in *different* requests: the key in the first `SETUP`
                     // of a session, the `type: 110` stream entry in a later one
-                    // without the key repeated (`raop_handlers.h:955-967` derives
+                    // without the key repeated ( derives
                     // it from the audio key the connection already holds). This
                     // used to be read from the same request, which meant a device
                     // that splits them never got a mirror stream at all: the

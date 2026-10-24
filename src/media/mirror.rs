@@ -37,7 +37,7 @@
 //! The protocol also sends the codec configuration (an H.264 SPS and PPS) in a packet
 //! of its own, *unencrypted*, and prepends it to the next video packet because a
 //! decoder needs it before the first frame
-//! (`raop_rtp_mirror.c:420-450`, [`CodecConfig`]).
+//!.
 
 use crate::crypto::sha512_concat;
 
@@ -282,7 +282,7 @@ pub fn parse_packet(datagram: &[u8]) -> Result<(MirrorHeader, &[u8]), MirrorErro
 ///
 /// A TCP reader has to do that: it reads the header first, learns how much
 /// follows and then reads exactly that, because a stream does not arrive in
-/// packets (`raop_rtp_mirror.c:298-302` loops the same way).
+/// packets.
 ///
 /// # Errors
 ///
@@ -730,7 +730,7 @@ impl MirrorDecryptor {
 ///
 /// The payload of a codec packet is not a plain sequence of units: it starts with
 /// six bytes of image size, then the two sizes and their sets
-/// (`raop_rtp_mirror.c:560-572` describes the header, `:725-728` reads the sets).
+///.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CodecConfig {
     /// The units with start codes, waiting for the video packet they belong to.

@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The audio stream a client sends after `SETUP`.
 //!
-//! The protocol receives audio datagrams, unwraps the RTP header, decrypts the
-//! payload and hands the result to a renderer in sequence order
-//! (, with the buffering and
-//! loss detection in `lib/raop_buffer.c`). This module is that path: it parses a
-//! datagram, decrypts the payload, and delivers frames in sequence order through a
-//! bounded reorder window, recording what went missing so a resend can be asked for.
+//! The receiver receives audio datagrams, unwraps the RTP header, decrypts the payload and
+//! hands the result to a renderer in sequence order, with buffering and loss detection. This
+//! module is that path: it parses a datagram, decrypts the payload, and delivers frames in
+//! sequence order through a bounded reorder window, recording what went missing so a resend can
+//! be asked for.
 //!
 //! # What a datagram looks like
 //!
-//! The layout is documented by the protocol at `raop_rtp.c:558-565`:
+//! The layout is:
 //!
 //! ```text
 //! packet[0] 0x80

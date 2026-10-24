@@ -13,7 +13,7 @@
 //!
 //! The protocol opens exactly these three for an audio session
 //! (, which binds a control and
-//! a data socket beside the timing socket of `raop_ntp.c`). The mirror stream
+//! a data socket beside the timing socket of). The mirror stream
 //! adds a TCP listener, and arrives with its own slice.
 //!
 //! Nothing here decides policy: the key and IV come from the `SETUP` that a

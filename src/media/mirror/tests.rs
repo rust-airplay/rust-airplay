@@ -27,7 +27,7 @@ fn units(units: &[&[u8]]) -> Vec<u8> {
 /// A codec payload the way the protocol reads one: two bytes, the source width and
 /// height as big-endian sixteen-bit values, then a sixteen-bit size and the
 /// sequence parameter set, then a sixteen-bit size and the picture parameter
-/// set (`raop_rtp_mirror.c:725-728`; the header around them is what
+/// set (; the header around them is what
 /// `:560-572` describes).
 /// A codec packet in the layout a client sends, which is the layout the reader
 /// above expects: six bytes of header, the sequence set's size and the set, one

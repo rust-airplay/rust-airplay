@@ -193,7 +193,7 @@ pub const DEFAULT_SOURCE_VERSION: &str = "220.68";
 /// seeing a picture — a real device's log showed the pin flow answering `470` at the second
 /// step, which is a protocol it was told to try and this crate does not complete.
 ///
-/// `dnssdint.h:33`'s `0x5A7FFEE6` is the value before adjusts it; the running
+///'s `0x5A7FFEE6` is the value before adjusts it; the running
 /// receiver is what matters, and it says `0x527FFEE6`.
 pub const DEFAULT_FEATURES: u64 = 0x527F_FEE6;
 
@@ -690,7 +690,7 @@ impl RouteHandlers {
             Ok(PairingReply::Silence) => RouteReply::ok(),
             Ok(PairingReply::Plist(value)) => binary_plist(value),
             Ok(PairingReply::Octets(body)) => octet_stream(body),
-            // `raop_handlers.h:533-537`: the default reply without a content
+            //: the default reply without a content
             // type, and the connection is closed afterwards.
             Ok(PairingReply::Disconnect) => RouteReply::ok().closing(),
             Err(error) => RouteReply::new(error.status(), error.reason()),
@@ -699,7 +699,7 @@ impl RouteHandlers {
 
     /// Port of `raop_handler_pairsetup_pin`
     fn pair_setup_pin(&mut self, request: &RouteRequest<'_>) -> RouteReply {
-        // `raop_handlers.h:287-298`: the protocol requires the header block to
+        //: the protocol requires the header block to
         // mention the binary plist format and answers 470 otherwise. It searches
         // the whole head, the port only its `Content-Type`.
         let is_plist = request
@@ -764,7 +764,7 @@ impl RouteHandlers {
             return RouteReply::new(403, "Forbidden");
         }
 
-        // `raop_handlers.h:785-798`: both keys are read as fixed-size buffers
+        //: both keys are read as fixed-size buffers
         // there, without looking at the length the client sent.
         let audio_iv = match body.get_data("eiv").ok() {
             Some(iv) => match <[u8; 16]>::try_from(iv) {
@@ -776,7 +776,7 @@ impl RouteHandlers {
         let encrypted = body.get_data("ekey").ok();
         let mut client_identity = None;
         let (audio_key, audio_iv) = match (encrypted, audio_iv) {
-            // A mirror-only setup carries neither, `raop_handlers.h:633`.
+            // A mirror-only setup carries neither,.
             (None, None) => (None, None),
             (Some(encrypted), Some(iv)) => {
                 if encrypted.len() != 72 {
@@ -790,7 +790,7 @@ impl RouteHandlers {
                 };
                 if let Some(session) = self.pairing.as_mut() {
                     if let Some(keys) = session.take_session_keys() {
-                        // `raop_handlers.h:848-854`: the key is hashed with the
+                        //: the key is hashed with the
                         // shared secret of a pairing session, which this crate
                         // only produces for a connection that verified the
                         // client (`pairing.c:108-119` is what it narrows).
@@ -805,7 +805,7 @@ impl RouteHandlers {
             _ => return RouteReply::new(400, "Bad Request"),
         };
 
-        // `raop_handlers.h:897-901`: the port the client listens on for the clock
+        //: the port the client listens on for the clock
         // exchange, which the receiver has to send its requests to. The receiver
         // starts that exchange, so a session that never learns this crate never
         // ticks.
@@ -822,7 +822,7 @@ impl RouteHandlers {
             .and_then(|port| u16::try_from(port).ok())
             .filter(|port| *port != 0);
 
-        // `raop_handlers.h:942-1060`: every requested stream is answered with
+        //: every requested stream is answered with
         // the port the receiver listens on, in request order.
         let mut streams = Vec::new();
         if let Ok(requested) = body.get_array("streams") {
@@ -1131,7 +1131,7 @@ impl RouteHandlers {
         let has_cseq = request.head.header("cseq").is_some();
         let content_type = request.head.header("content-type");
 
-        // `raop_handlers.h:64-94`: the client names the TXT record it wants,
+        //: the client names the TXT record it wants,
         // either in a binary plist qualifier or, for Bluetooth LE discovery
         // without a CSeq, in the URL.
         let mut add_airplay_txt = false;
@@ -1156,7 +1156,7 @@ impl RouteHandlers {
             let txt = self.identity.txt_raop.clone().unwrap_or_default();
             dictionary.insert("txtRAOP".to_owned(), plist::Value::Data(txt));
         }
-        // `raop_handlers.h:108-111`: a request that asked for a TXT record gets
+        //: a request that asked for a TXT record gets
         // nothing else, because it is the Bluetooth LE discovery path.
         if content_type.is_some() {
             return binary_plist(plist::Value::Dictionary(dictionary));
@@ -1187,7 +1187,7 @@ impl RouteHandlers {
         dictionary.insert("keepAliveSendStatsAsBody".to_owned(), true.into());
         dictionary.insert("model".to_owned(), self.identity.model.clone().into());
 
-        // `raop_handlers.h:163-166`: the Bluetooth LE response stops here.
+        //: the Bluetooth LE response stops here.
         if !has_cseq {
             return binary_plist(plist::Value::Dictionary(dictionary));
         }
