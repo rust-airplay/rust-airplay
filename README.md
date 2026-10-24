@@ -95,8 +95,7 @@ documentation on [docs.rs](https://docs.rs/rust-airplay).
 ## Status
 
 Version 0.2.0. The public API is the one this release documents; a breaking change before 1.0
-is possible but not planned. Version 1.0 is the point where the API is frozen and the backend
-can be published beside this crate.
+is possible but not planned. Version 1.0 is the point where the API is frozen.
 
 ## Licence
 
