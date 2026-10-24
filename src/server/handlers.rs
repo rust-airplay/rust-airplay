@@ -362,7 +362,18 @@ impl Default for Display {
 
 impl DeviceIdentity {
     /// Creates an identity for `device_id` and `name` that carries `public_key`
-    /// and keeps every other the protocol default.
+    /// and keeps every other default.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rust_airplay::server::DeviceIdentity;
+    ///
+    /// let identity =
+    ///     DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Living room", vec![0x11; 32]);
+    /// assert_eq!(identity.device_id, "aa:bb:cc:dd:ee:ff");
+    /// assert_eq!(identity.name, "Living room");
+    /// ```
     pub fn new(device_id: impl Into<String>, name: impl Into<String>, public_key: Vec<u8>) -> Self {
         Self {
             device_id: device_id.into(),

@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What a renderer has to accept, and a renderer that accepts everything.
+//! The backend boundary, and a renderer that accepts everything.
 //!
-//! The protocol splits the work in two: `lib/` receives the media and `renderers/` is a
-//! sub-project of its own that decodes and plays it, with the application wiring the
-//! two together. [`docs/ARCHITECTURE.md`] took the
-//! same shape for this crate and deferred the exact interface to the moment the first
-//! renderer landed: this crate is that moment.
+//! The receiver stops at coded frames: a renderer receives an audio payload or a video access
+//! unit and is responsible for decoding and playback. The interface exists so a media backend
+//! can be replaced without touching the protocol, and so a backend can be tested without a
+//! device. Nothing here decodes, opens a device or links a media library: [`NullRenderer`]
+//! accepts everything and plays nothing, which is what a session runs against without a sound
+//! card.
 //!
-//! The interface exists so that a media backend can be replaced without touching the
-//! protocol, and so that a backend can be tested without a decoder. Nothing here
-//! decodes, allocates a device or links a media library: a backend is a crate of its
-//! own, and [`NullRenderer`] is the one that always works.
-//!
-//! [`docs/ARCHITECTURE.md`]: ../../../docs/ARCHITECTURE.md
+//! [`Renderer`] is implemented by a backend crate; `docs/BACKEND.md` describes the contract in
+//! the order a backend meets it.
 
 use std::fmt;
 
