@@ -65,6 +65,7 @@ rust_airplay::run(config).await?;
 - [docs/PARAMETERS.zh-CN.md](docs/PARAMETERS.zh-CN.md) 与 [PARAMETERS.md](docs/PARAMETERS.md)：上游每一个命令行参数，在本项目中的对应位置
 - [docs/BUILD.zh-CN.md](docs/BUILD.zh-CN.md) 与 [BUILD.md](docs/BUILD.md)：工具链与门禁
 - [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md) 与 [ARCHITECTURE.md](docs/ARCHITECTURE.md)：crate 划分与会话路径
+- [CHANGELOG.md](CHANGELOG.md)：每个版本包含什么
 - [MIGRATION.md](MIGRATION.md)：本仓库是如何从单一工作区拆出来的
 - [AGENT.md](AGENT.md)：给自动化贡献者的说明
 

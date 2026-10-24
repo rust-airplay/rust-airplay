@@ -162,7 +162,7 @@ fn features_are_split_into_two_thirty_two_bit_halves() {
 ///
 /// Ignored by default: it needs multicast DNS to work on the machine, and a
 /// system Bonjour service may already hold the port. Run it with
-/// `cargo test -p airplay-core --lib -- --ignored advertises_and_withdraws`.
+/// `cargo test --lib -- --ignored advertises_and_withdraws`.
 #[test]
 #[ignore = "needs a working multicast DNS responder on the local network"]
 fn advertises_and_withdraws_both_records() {

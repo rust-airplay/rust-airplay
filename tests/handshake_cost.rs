@@ -14,7 +14,7 @@
 //! raised until it passes — and prints what it saw. Run it next to a slow connection:
 //!
 //! ```powershell
-//! cargo test --release -p airplay-core --test handshake_cost -- --ignored --nocapture
+//! cargo test --release --test handshake_cost -- --ignored --nocapture
 //! ```
 //!
 //! If these are milliseconds, the time is somewhere this crate cannot see: the client

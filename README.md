@@ -89,6 +89,7 @@ without a sound card, and what a new backend can be compared with.
   the gates
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
   [ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md): the crates and the path a session takes
+- [CHANGELOG.md](CHANGELOG.md): what each release contains
 - [MIGRATION.md](MIGRATION.md): how this repository came out of a single workspace
 - [AGENT.md](AGENT.md): notes for automated contributors
 

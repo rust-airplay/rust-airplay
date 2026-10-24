@@ -10,13 +10,14 @@
 //! These tests run it and compare its answers with this crate, so a protocol claim
 //! is checked against the C code instead of against a second reading of it.
 //!
-//! Ignored by default because it needs a C toolchain; see
-//! `tools/oracle/README.md`.
+//! Ignored by default because it needs a C toolchain. The oracle lives in the repository
+//! under `tools/oracle/`, not in a published crate; build it with
+//! `pwsh tools/oracle/build.ps1` and point `AIRPLAY_UPSTREAM_ORACLE` at the program.
 //!
 //! ```text
 //! pwsh tools/oracle/build.ps1
 //! $env:AIRPLAY_UPSTREAM_ORACLE = "$PWD/tools/oracle/oracle.exe"
-//! cargo test -p airplay-core --test upstream_oracle -- --ignored --nocapture
+//! cargo test --test upstream_oracle -- --ignored --nocapture
 //! ```
 
 use std::collections::HashMap;

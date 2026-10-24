@@ -135,7 +135,7 @@ fn local_config() -> ServerConfig {
 ///
 /// Ignored by default: the numbers depend on the machine, so this is a
 /// measurement rather than an assertion. Run it with
-/// `cargo test -p airplay-core --test server_spec -- --ignored --nocapture`.
+/// `cargo test --test server_spec -- --ignored --nocapture`.
 #[tokio::test]
 #[ignore = "measurement, not an assertion"]
 async fn measures_control_plane_throughput() {

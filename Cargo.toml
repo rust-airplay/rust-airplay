@@ -8,10 +8,13 @@ readme = "README.md"
 include = [
     "/src/**/*.rs",
     "/examples/**/*.rs",
+    "/tests/**/*.rs",
+    "/tests/fixtures/*.bplist",
     "/docs/**/*.md",
     "/Cargo.toml",
     "/README.md",
     "/README.zh-CN.md",
+    "/CHANGELOG.md",
     "/THIRD_PARTY_NOTICES.md",
     "/LICENSE",
 ]

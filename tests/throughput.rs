@@ -17,7 +17,7 @@
 //! prints is the number to compare after a change.
 //!
 //! ```powershell
-//! cargo test -p airplay-core --test throughput -- --ignored --nocapture
+//! cargo test --test throughput -- --ignored --nocapture
 //! ```
 
 use std::time::Instant;

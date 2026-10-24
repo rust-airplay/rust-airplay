@@ -81,7 +81,7 @@ fn rejects_a_payload_that_nests_deeper_than_the_parser_can_descend() {
 fn the_parser_behind_this_module_overflows_on_deep_nesting() {
     // Calls the backing parser directly, bypassing `check_structure`, so that
     // the reason for [`MAX_PLIST_DEPTH`] stays verifiable on demand:
-    // `cargo test -p airplay-core --lib -- --ignored the_parser_behind`.
+    // `cargo test --lib -- --ignored the_parser_behind`.
     let bytes = nested_binary_plist(1_300);
     let _ = plist::Value::from_reader(Cursor::new(&bytes));
 }
