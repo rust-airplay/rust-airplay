@@ -40,7 +40,8 @@ pub mod srp;
 pub mod wire;
 
 pub use receiver::{
-    ArtworkCallback, Config, Error as ReceiverError, MetadataCallback, RemoteControlCallback, run,
+    ArtworkCallback, Config, Error as ReceiverError, MetadataCallback, PinCallback,
+    RemoteControlCallback, run,
 };
 pub use render::{
     AudioCodec, AudioConfig, AudioFrame, AudioStream, NullRenderer, RenderError, Renderer,

@@ -365,6 +365,12 @@ pub struct Config {
     /// matches, so this is how a receiver asks for a smaller picture or a lower frame
     /// rate without touching the stream afterwards.
     pub display: crate::server::Display,
+    /// Called with the one-time PIN a client is asked for, as it is drawn.
+    ///
+    /// The PIN is the one thing a receiver must show a person, and the library cannot print:
+    /// a program that has to read its own log to find it is a program with the wrong
+    /// interface. Called from a background thread, once per PIN.
+    pub on_pin: Option<PinCallback>,
     /// What to do with artwork a client sends, given its content type.
     ///
     /// Upstream's `-ca`: the bytes are a JPEG or PNG the program may write or show. The
@@ -404,6 +410,9 @@ pub struct Config {
     /// a stream that arrives in bursts and a viewer who watches rather than types.
     pub pace_video: bool,
 }
+
+/// Called with the four-digit PIN a client is being asked for.
+pub type PinCallback = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Called with the content type and bytes of artwork a client sends.
 pub type ArtworkCallback = Arc<dyn Fn(&str, &[u8]) + Send + Sync>;
@@ -813,13 +822,17 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // The PIN only exists once a client asks for one, so it is printed when it
     // appears rather than up front.
     let pin_state = Arc::clone(&state);
+    let on_pin = config.on_pin.clone();
     std::thread::spawn(move || {
         let mut shown: Option<String> = None;
         loop {
             let pin = pin_state.pending_pin();
             if pin != shown {
                 if let Some(pin) = pin.as_deref() {
-                    log::info!("*** enter PIN {pin} on the client ***");
+                    log::debug!("pairing   a PIN is pending");
+                    if let Some(callback) = &on_pin {
+                        callback(pin);
+                    }
                 }
                 shown = pin;
             }

@@ -50,6 +50,7 @@ instead of a hidden default. The library reads no environment variable and opens
 | `initial_volume` | `Volume` | the slider position a session starts at; upstream's `-vol` |
 | `volume_curve` | `VolumeCurve` | how a client's decibels become a gain: flat or tapered, with the `-30..0` range rescaled; upstream's `-db` and `-taper` |
 | `log_streaming_reports` | `bool` | write the client's once-a-second streaming reports to the log; upstream's `-FPSdata` |
+| `on_pin` | `Option<PinCallback>` | called with the one-time PIN as it is drawn, from a background thread |
 | `on_artwork` | `Option<ArtworkCallback>` | called with the content type and bytes of artwork a client sends; upstream's `-ca` |
 | `on_metadata` | `Option<MetadataCallback>` | called with the DMAP listing a client sends; `media::dmap::text` turns it into the lines of an `-md` file |
 | `on_remote_control` | `Option<RemoteControlCallback>` | called with the `DACP-ID` and `Active-Remote` a request carries; upstream's `-dacp` |

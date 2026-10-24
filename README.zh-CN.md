@@ -44,6 +44,7 @@ let config = Config {
     initial_volume: rust_airplay::Volume::FULL,
     volume_curve: rust_airplay::VolumeCurve::default(),
     log_streaming_reports: false,
+    on_pin: None,
     on_artwork: None,
     on_metadata: None,
     on_remote_control: None,
