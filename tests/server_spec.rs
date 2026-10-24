@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+
+// Tests report what they measured; the library itself never prints.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
 //! End-to-end checks of the network control service.
 //!
 //! Every case opens a real TCP connection to a [`Server`] the test bound to an

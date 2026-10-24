@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+
+// Tests report what they measured; the library itself never prints.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
 //! Fixture-driven checks of the plist layer.
 //!
 //! The fixtures under `tests/fixtures/` are produced by CPython's `plistlib`

@@ -441,9 +441,6 @@ pub struct RouteHandlers {
     /// The peer of the connection whose `SETUP` is being served, which is where
     /// the clock exchange has to go.
     peer: Option<std::net::SocketAddr>,
-    /// Whether a `SETUP` body is reported in full, which a device session needs
-    /// and a normal run does not.
-    debug_setup: bool,
     setup: Option<Box<dyn FnMut(SetupRequest) + Send>>,
     /// Which clients may start a session.
     client_policy: ClientPolicy,
@@ -490,7 +487,6 @@ impl RouteHandlers {
             pairing: None,
             setup_ports: SetupPorts::default(),
             peer: None,
-            debug_setup: std::env::var("AIRPLAY_DEBUG_SETUP").is_ok(),
             setup: None,
             client_policy: ClientPolicy::default(),
             feedback_clock: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(now_millis())),
@@ -865,14 +861,10 @@ impl RouteHandlers {
                 let connection_id = stream_connection_id(stream);
                 // What the entry actually carried, for a device that names its mirror
                 // stream in one session and not in the next: the difference is either in
-                // the request or in this reader, and only the keys can say which. A
-                // setting, because it names what a client sent.
-                if connection_id.is_none() && std::env::var("AIRPLAY_DEBUG_SETUP").is_ok() {
+                // the request or in this reader, and only the keys can say which.
+                if connection_id.is_none() {
                     let keys: Vec<&str> = stream.keys().map(String::as_str).collect();
-                    eprintln!(
-                        "rust-airplay: stream type {kind} carried [{}]",
-                        keys.join(", ")
-                    );
+                    log::debug!("set     stream type {kind} carried [{}]", keys.join(", "));
                 }
                 // Upstream's `switch` has no default arm: an unknown type is
                 // simply not answered (`:954-1050`).
@@ -946,11 +938,7 @@ impl RouteHandlers {
             streams,
             client_timing_port,
             client_address: self.peer,
-            debug_body: if self.debug_setup {
-                Some(describe_plist(&body))
-            } else {
-                None
-            },
+            debug_body: Some(describe_plist(&body)),
             keys,
             client_identity,
             authentication,

@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+
+// Tests report what they measured; the library itself never prints.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
 //! What the packet path costs, so that "make it faster" is a measurement.
 //!
 //! The mirror stream is the only part of this crate that runs continuously at a device's

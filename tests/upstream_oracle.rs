@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+
+// Tests report what they measured; the library itself never prints.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
 //! Differential checks against the upstream C implementation.
 //!
 //! The oracle under `tools/oracle/` compiles UxPlay's own `crypto.c`,

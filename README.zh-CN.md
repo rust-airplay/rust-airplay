@@ -1,10 +1,19 @@
 # rust-airplay
 
-作为库使用的 AirPlay 1/2 接收端。
+作为一个库的 AirPlay 1/2 接收端。
 
-`rust-airplay` 通过 mDNS 广播接收端、应答 AirPlay 控制协议、与客户端配对、接收屏幕镜像与音频、解密，并把编码后的帧交给渲染器。它不打开文件、不读环境变量、不打印任何东西，因此日志去哪里、身份存在哪里，都由嵌入它的程序决定。
+它通过 mDNS 广播接收端、应答 AirPlay 控制协议、完成配对、接收投屏与音频、解密两者，并把编码后的帧交给渲染器。它停在编码边界：解码与播放是后端的事，因为一个后端就是一种技术和一棵依赖树。
 
-库的职责停在编码边界上：交给渲染器的是参数集已前置的 Annex-B 访问单元，或一帧音频负载。解码与播放属于后端，因为一个后端就是一种技术、一个仓库。GStreamer 实现见 [rust-airplay-gstream](https://github.com/rust-airplay/rust-airplay-gstream)。
+## 做什么，不做什么
+
+| 库负责 | 程序负责 |
+| --- | --- |
+| 发现、配对、FairPlay、RTSP 路由 | 身份存在哪里 |
+| 媒体套接字、解密、RTP、分帧 | 渲染器从哪里来 |
+| 时间戳、节流、音量换算 | PIN 与错误怎么显示 |
+| 为发生的每件事写一条 `log` 记录 | 打印哪些记录、打印到哪里 |
+
+库不打开自己的任何文件、不读环境变量、不打印。它可能写下的两个文件都是显式要求的：`Config::trace_log` 与两个诊断转储。
 
 ## 引入
 
@@ -13,75 +22,62 @@
 rust-airplay = "0.1"
 ```
 
-需要 Rust 1.85 或更新版本。这个 crate 不链接任何 C 库。
+需要 Rust 1.85 或更新版本，2024 edition。crate 不链接任何 C 库。
 
 ## 启动接收端
 
 ```rust,no_run
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use rust_airplay::server::PinMode;
-use rust_airplay::{AudioCodec, Config, NullRenderer};
+use rust_airplay::{Config, NullRenderer};
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-let config = Config {
-    name: "Living room".to_owned(),
-    port: 7000,
-    seed: [0x42; 32],
-    device_id: None,
-    pin: PinMode::OneTime,
-    password: None,
-    audio_codec: AudioCodec::AacEld,
-    renderer: Arc::new(NullRenderer::new()),
-    clients: Arc::new(Mutex::new(HashSet::new())),
-    on_client: None,
-    trace_log: None,
-    dump_video: None,
-    dump_audio: None,
-    pace_video: false,
-    audio_latency: std::time::Duration::from_millis(250),
-    initial_volume: rust_airplay::Volume::FULL,
-    volume_curve: rust_airplay::VolumeCurve::default(),
-    log_streaming_reports: false,
-    on_pin: None,
-    on_artwork: None,
-    on_metadata: None,
-    on_remote_control: None,
-    features: None,
-    client_policy: rust_airplay::server::ClientPolicy::default(),
-    ports: rust_airplay::media::ports::MediaPorts::automatic(),
-    nohold: false,
-    feedback_timeout: None,
-    display: rust_airplay::server::Display::default(),
-};
-
+let config = Config::new("Living room", [0x42; 32], Arc::new(NullRenderer::new()));
 rust_airplay::run(config).await?;
 # Ok(())
 # }
 ```
 
-`run` 持续服务客户端，直到进程被要求停止。有两个字段值得解释，因为接收端跨重启的行为就来自它们。`seed` 是身份派生所用的秘密，传入同一个种子，接收端就还是同一个。`clients` 是已验证的客户端密钥集合，`on_client` 在新的密钥加入时被调用，那时正是把它写下来的时机。
+`Config::new` 填好所有默认值，只留下接收端无法凭空产生的三个值：客户端看到的名字、身份所派生的 32 字节种子、以及由什么播放媒体。这三个值和 `Config` 的其余字段一样，都是调用方已经决定好的值：库不读环境、不选路径、不解析命令行。
+
+有三个字段决定程序要在 `run` 周围做什么：
+
+- `seed` 是身份派生的秘密。同一个种子让接收端对之前配对过的客户端保持可识别，所以程序要保存它。
+- `clients` 是已验证的客户端密钥集合，新密钥加入时 `on_client` 被调用。这张名单由程序读写。
+- `on_pin` 在一次性 PIN 生成时被调用。它是坐在键盘前的人必须看到的唯一信息，而库不打印。
+
+`run` 持续服务客户端直到进程停止：它不是带关闭句柄的服务器对象，程序像结束任何其他进程一样结束它。
 
 ## 播放媒体
 
-`Renderer` 是边界：`open_audio`、`open_video`、`set_volume`。`VideoConfig::codec` 说明帧的编码，`VideoFrame` 携带 Annex-B 字节，所以后端只需要一个字节流解码器。`NullRenderer` 全部接受但不播放，适合测试，也适合在没有声卡的机器上检查会话。
+`Renderer` 是接缝。它有三个方法——`open_audio`、`open_video`、`set_volume`——和两条流 `AudioStream` 与 `VideoStream`。越过接缝的东西已经是编码过的：一帧音频的负载，或一个 Annex-B 形式、参数集已前置的视频访问单元。所以后端需要的是解码器和设备，而不是任何 AirPlay 知识。
 
-## 日志
+- [docs/BACKEND.zh-CN.md](docs/BACKEND.zh-CN.md) 是这份契约，按后端遇到的顺序写，包含一个完整的最小实现和检查清单。
+- `examples/recorder.rs` 就是那个实现，随 crate 一起编译。
+- [rust-airplay-gstream](https://github.com/rust-airplay/rust-airplay-gstream) 是参考后端：音频走 GStreamer，视频走 `gst-launch-1.0`。
 
-记录通过 `log` 以 `info`、`warn`、`debug` 输出。没有安装 logger 就什么也不打印。客户端需要输入的 PIN 也在 `info` 记录里，因此想把它显示得更醒目的程序应当安装自己的 logger。
+`NullRenderer` 接受一切、什么都不播。它是没有声卡时也能跑通会话的东西，也是新后端用来对比的已知正确消费者。
 
 ## 文档
 
-- [docs/API.zh-CN.md](docs/API.zh-CN.md)：配置、渲染 trait、模块
-- [docs/PARAMETERS.zh-CN.md](docs/PARAMETERS.zh-CN.md)：上游每一个命令行参数，在本项目中的对应位置
-- [docs/BUILD.zh-CN.md](docs/BUILD.zh-CN.md)：工具链与门禁
-- [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md)：crate 划分与会话路径
+- [docs/BACKEND.zh-CN.md](docs/BACKEND.zh-CN.md) 与 [BACKEND.md](docs/BACKEND.md)：如何实现播放后端
+- [docs/API.zh-CN.md](docs/API.zh-CN.md) 与 [API.md](docs/API.md)：配置、渲染 trait、模块
+- [docs/PARAMETERS.zh-CN.md](docs/PARAMETERS.zh-CN.md) 与 [PARAMETERS.md](docs/PARAMETERS.md)：上游每一个命令行参数，在本项目中的对应位置
+- [docs/BUILD.zh-CN.md](docs/BUILD.zh-CN.md) 与 [BUILD.md](docs/BUILD.md)：工具链与门禁
+- [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md) 与 [ARCHITECTURE.md](docs/ARCHITECTURE.md)：crate 划分与会话路径
 - [MIGRATION.md](MIGRATION.md)：本仓库是如何从单一工作区拆出来的
 - [AGENT.md](AGENT.md)：给自动化贡献者的说明
 
+API 参考是源码构建出的 rustdoc：`cargo doc --open`，或 [docs.rs](https://docs.rs/rust-airplay) 上的渲染结果。
+
+## 状态
+
+版本 0.1.0。公开 API 就是本版本所记录的这一套；1.0 之前仍有可能发生破坏性变更，但并未计划。1.0 是 API 冻结、GStreamer 后端可以与本 crate 一起发布的节点。
+
+涉及协议时语义跟随 UxPlay，差异记录在 [docs/PARAMETERS.zh-CN.md](docs/PARAMETERS.zh-CN.md) 里，而不是留给使用者去发现。
+
 ## 许可证
 
-GPL-3.0-or-later。见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+GPL-3.0-or-later，因为其中部分是 GPL 与 LGPL 源码的翻译。链接本 crate 的程序受同一许可证约束；见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 English: [README.md](README.md)。

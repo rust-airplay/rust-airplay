@@ -2,8 +2,19 @@
 name = "rust-airplay"
 description = "AirPlay 1/2 receiver: the protocol, the media session and the renderer boundary"
 repository = "https://github.com/rust-airplay/rust-airplay"
+homepage = "https://github.com/rust-airplay/rust-airplay"
+documentation = "https://docs.rs/rust-airplay"
 readme = "README.md"
-include = ["/src/**/*.rs", "/Cargo.toml", "/README.md", "/README.zh-CN.md", "/LICENSE"]
+include = [
+    "/src/**/*.rs",
+    "/examples/**/*.rs",
+    "/docs/**/*.md",
+    "/Cargo.toml",
+    "/README.md",
+    "/README.zh-CN.md",
+    "/THIRD_PARTY_NOTICES.md",
+    "/LICENSE",
+]
 keywords = ["airplay", "raop", "mirroring", "receiver", "airplay2"]
 categories = ["multimedia", "network-programming"]
 version = "0.1.0"
@@ -16,12 +27,23 @@ publish = true
 name = "rust_airplay"
 path = "src/lib.rs"
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [lints.rust]
+# A published library documents every public item, and nothing unsafe reaches it.
 unsafe_code = "forbid"
-missing_docs = "warn"
+missing_docs = "deny"
 
 [lints.clippy]
 all = "warn"
+# A library does not write to the process's console and does not leave stubs behind.
+print_stdout = { level = "deny", priority = -1 }
+print_stderr = { level = "deny", priority = -1 }
+dbg_macro = { level = "deny", priority = -1 }
+todo = { level = "deny", priority = -1 }
+unimplemented = { level = "deny", priority = -1 }
 
 [dependencies]
 aes = "0.8"

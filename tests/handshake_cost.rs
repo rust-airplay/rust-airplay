@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+
+// Tests report what they measured; the library itself never prints.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
 //! What the receiver's own answers cost, phase by phase.
 //!
 //! "Connecting takes a while" can be a client's decision, a network's delay, or a server

@@ -411,6 +411,60 @@ pub struct Config {
     pub pace_video: bool,
 }
 
+impl Config {
+    /// A configuration a receiver can start from.
+    ///
+    /// The three things a receiver cannot invent are its name, the seed its identity derives
+    /// from, and what plays the media; everything else has the value a normal run wants and
+    /// is a public field for a caller that wants another.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use rust_airplay::{Config, NullRenderer};
+    ///
+    /// let config = Config::new("Living room", [0x2a; 32], Arc::new(NullRenderer::new()));
+    /// assert_eq!(config.port, 7000);
+    /// assert_eq!(config.display.width, 1920);
+    /// ```
+    #[must_use]
+    pub fn new(name: impl Into<String>, seed: [u8; 32], renderer: Arc<dyn Renderer>) -> Self {
+        Self {
+            name: name.into(),
+            port: 7000,
+            seed,
+            device_id: None,
+            pin: PinMode::OneTime,
+            password: None,
+            audio_codec: AudioCodec::AacEld,
+            renderer,
+            clients: Arc::new(Mutex::new(HashSet::new())),
+            on_client: None,
+            trace_log: None,
+            dump_video: None,
+            dump_audio: None,
+            audio_latency: std::time::Duration::from_micros(u64::from(
+                crate::control::DEFAULT_AUDIO_DELAY_MICROS,
+            )),
+            nohold: false,
+            feedback_timeout: None,
+            ports: crate::media::ports::MediaPorts::automatic(),
+            client_policy: crate::server::ClientPolicy::default(),
+            features: None,
+            display: crate::server::Display::default(),
+            on_pin: None,
+            on_artwork: None,
+            on_metadata: None,
+            on_remote_control: None,
+            log_streaming_reports: false,
+            volume_curve: crate::VolumeCurve::default(),
+            initial_volume: crate::Volume::FULL,
+            pace_video: false,
+        }
+    }
+}
+
 /// Called with the four-digit PIN a client is being asked for.
 pub type PinCallback = Arc<dyn Fn(&str) + Send + Sync>;
 
