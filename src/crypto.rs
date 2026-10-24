@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! RustCrypto-backed primitives used by AirPlay pairing and media decryption.
 //!
-//! Protocol code chooses the exact mode, IV length, and key derivation labels.
-//! These helpers intentionally do not silently pad, truncate, or normalize input.
-
-#![allow(missing_docs)]
+//! Protocol code chooses the exact mode, IV length and key derivation labels; these helpers
+//! only run the primitive. They intentionally do not silently pad, truncate or normalize
+//! input: a key of the wrong length is an error, not a value quietly stretched to fit, because
+//! the other side of a pairing exchange would compute a different key and the only symptom
+//! would be an authentication failure much later.
 
 use aes::Aes128;
 use aes_gcm::{
@@ -22,10 +23,14 @@ use x25519_dalek::{X25519_BASEPOINT_BYTES, x25519};
 type Aes128Ctr = Ctr128BE<Aes128>;
 type Aes128Gcm16 = AesGcm<Aes128, cipher::consts::U16>;
 
+/// Why a cryptographic operation refused its input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CryptoError {
+    /// A key, IV, nonce, tag or block count was outside the size the operation requires.
     InvalidLength(&'static str),
+    /// The key or IV was the right size but not a usable value for this cipher.
     InvalidKey,
+    /// An AEAD tag did not authenticate the record.
     AuthenticationFailed,
 }
 
@@ -40,6 +45,11 @@ impl std::fmt::Display for CryptoError {
 }
 impl std::error::Error for CryptoError {}
 
+/// Hashes the concatenation of `parts` with SHA-512.
+///
+/// AirPlay derives keys from a label followed by a shared secret, so the concatenation is the
+/// contract: hashing the parts separately produces a different, wrong key.
+#[must_use]
 pub fn sha512_concat(parts: &[&[u8]]) -> [u8; 64] {
     let mut hasher = Sha512::new();
     for part in parts {
@@ -48,6 +58,10 @@ pub fn sha512_concat(parts: &[&[u8]]) -> [u8; 64] {
     hasher.finalize().into()
 }
 
+/// Hashes the concatenation of `parts` with SHA-1.
+///
+/// SHA-1 is what the SRP exchange and the legacy pairing transcript use; it is not a choice.
+#[must_use]
 pub fn sha1_concat(parts: &[&[u8]]) -> [u8; 20] {
     let mut hasher = Sha1::new();
     for part in parts {
@@ -56,6 +70,11 @@ pub fn sha1_concat(parts: &[&[u8]]) -> [u8; 20] {
     hasher.finalize().into()
 }
 
+/// Hashes the concatenation of `parts` with MD5.
+///
+/// The digest only appears in RTSP digest authorization, where it is part of the wire
+/// protocol.
+#[must_use]
 pub fn md5_concat(parts: &[&[u8]]) -> [u8; 16] {
     let mut hasher = Md5::new();
     for part in parts {
@@ -64,6 +83,11 @@ pub fn md5_concat(parts: &[&[u8]]) -> [u8; 16] {
     hasher.finalize().into()
 }
 
+/// Takes the first `output_len` bytes of a SHA-512 hash of `parts`.
+///
+/// # Errors
+///
+/// Returns [`CryptoError::InvalidLength`] when `output_len` is longer than a SHA-512 digest.
 pub fn sha512_derive(parts: &[&[u8]], output_len: usize) -> Result<Vec<u8>, CryptoError> {
     if output_len > 64 {
         return Err(CryptoError::InvalidLength("SHA-512 output"));
@@ -80,6 +104,11 @@ pub struct Aes128CtrState {
 }
 
 impl Aes128CtrState {
+    /// Starts a keystream with a 16-byte key and a 16-byte IV.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError::InvalidLength`] when either value is not 16 bytes.
     pub fn new(key: &[u8], iv: &[u8]) -> Result<Self, CryptoError> {
         let key: [u8; 16] = key
             .try_into()
@@ -91,10 +120,21 @@ impl Aes128CtrState {
         Ok(Self { cipher, key, iv })
     }
 
+    /// Encrypts or decrypts `data` in place, advancing the counter by its length.
+    ///
+    /// Counter mode is its own inverse, and the counter position is what ties a packet to the
+    /// keystream a sender used: the caller applies the same state to consecutive bytes of a
+    /// stream, in order.
     pub fn apply(&mut self, data: &mut [u8]) {
         self.cipher.apply_keystream(data);
     }
 
+    /// Rewinds to the start of the keystream.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError::InvalidKey`] when the stored key and IV cannot start a cipher,
+    /// which cannot happen after a successful [`Aes128CtrState::new`].
     pub fn reset(&mut self) -> Result<(), CryptoError> {
         self.cipher =
             Aes128Ctr::new_from_slices(&self.key, &self.iv).map_err(|_| CryptoError::InvalidKey)?;
@@ -102,6 +142,12 @@ impl Aes128CtrState {
     }
 }
 
+/// Decrypts whole AES-128-CBC blocks with no padding.
+///
+/// # Errors
+///
+/// Returns [`CryptoError::InvalidLength`] when the input is not a whole number of blocks and
+/// [`CryptoError::InvalidKey`] for a key or IV of the wrong size.
 pub fn aes128_cbc_decrypt(key: &[u8], iv: &[u8], input: &[u8]) -> Result<Vec<u8>, CryptoError> {
     if input.len() % 16 != 0 {
         return Err(CryptoError::InvalidLength("AES-CBC blocks"));
@@ -163,10 +209,14 @@ pub fn aes128_gcm16_encrypt(
     Ok((ciphertext, tag_bytes))
 }
 
+/// The X25519 public key of a private scalar.
+#[must_use]
 pub fn x25519_public(private_key: &[u8; 32]) -> [u8; 32] {
     x25519(*private_key, X25519_BASEPOINT_BYTES)
 }
 
+/// The X25519 shared secret between a private scalar and a peer public key.
+#[must_use]
 pub fn x25519_shared(private_key: &[u8; 32], peer_public: &[u8; 32]) -> [u8; 32] {
     x25519(*private_key, *peer_public)
 }
@@ -183,11 +233,19 @@ pub fn ed25519_public_key(private_key: &[u8; 32]) -> [u8; 32] {
         .to_bytes()
 }
 
+/// Signs `message` with the private seed, producing the 64-byte signature the pairing
+/// protocol carries.
+#[must_use]
 pub fn ed25519_sign(private_key: &[u8; 32], message: &[u8]) -> [u8; 64] {
     use ed25519_dalek::{Signer, SigningKey};
     SigningKey::from_bytes(private_key).sign(message).to_bytes()
 }
 
+/// Verifies a signature against a public key.
+///
+/// Returns `false` rather than an error: a wrong signature and a malformed public key are the
+/// same answer to a pairing step, and the caller answers both the same way.
+#[must_use]
 pub fn ed25519_verify(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
     let Ok(key) = VerifyingKey::from_bytes(public_key) else {

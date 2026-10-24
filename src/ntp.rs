@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#![allow(missing_docs)]
-// SPDX-License-Identifier: GPL-3.0-or-later
-//! NTP wire timestamp conversion used by AirPlay timing and media clocks.
+//! NTP wire timestamps, and their conversion to and from Unix nanoseconds.
+//!
+//! AirPlay's timing exchange and every media timestamp use the 64-bit NTP format: 32 bits of
+//! seconds since 1900-01-01 and 32 bits of binary fraction. It is not a `SystemTime`, and the
+//! two are not interchangeable: the wire format counts from 1900, wraps every 2^32 seconds and
+//! carries a 1/2^32-second fraction, while the crate's internal time is Unix nanoseconds.
+//!
+//! The conversion is exact in both directions: the fraction is scaled with integer arithmetic,
+//! so a timestamp survives a round trip to within the precision the wire format can carry.
 
 use crate::wire::ParseError;
 
+/// Seconds between the NTP epoch (1900-01-01) and the Unix epoch (1970-01-01).
 pub const NTP_UNIX_EPOCH_SECONDS: u64 = 2_208_988_800;
+/// Nanoseconds in one second, the unit the rest of the crate counts time in.
 pub const NANOS_PER_SECOND: u64 = 1_000_000_000;
 /// Length of one NTP era in seconds. Era 0 covers 1900-01-01 through
 /// 2036-02-07; the 32-bit wire field cannot express a later instant.

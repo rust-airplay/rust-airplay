@@ -1,10 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#![allow(missing_docs)]
-// SPDX-License-Identifier: GPL-3.0-or-later
 //! Incremental, bounded RTSP/HTTP wire parsing.
+//!
+//! A control connection is a byte stream, not a sequence of messages: a request can arrive
+//! in pieces, two requests can arrive in one read, and a peer can send a header block larger
+//! than any receiver should buffer. [`parse_request_head`] is the incremental half - it
+//! returns [`ParseError::Incomplete`] until the head is whole - and [`split_body`] is the
+//! other: once the head says how long the body is, the caller reads exactly that many bytes.
+//!
+//! Every bound here is a refusal rather than a truncation. A head this module cannot frame is
+//! answered with `431` by the caller, and a request that asks for a transfer coding it does
+//! not implement is refused because framing it by `Content-Length` instead would desynchronise
+//! the connection.
 
 use std::fmt;
 
+/// Largest request body accepted by default: eight mebibytes.
+///
+/// The largest body an AirPlay client sends is a `SETUP` plist, which is measured in
+/// kilobytes; the bound exists so a peer cannot make a receiver allocate without limit.
 pub const DEFAULT_MAX_BODY: usize = 8 * 1024 * 1024;
 /// Largest accepted request head: start line plus headers, including the
 /// terminating CRLF CRLF. Callers accumulate the head before parsing it, so it
@@ -48,11 +61,22 @@ impl Default for HeadLimits {
     }
 }
 
+/// Why a request could not be framed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseError {
+    /// More bytes are needed before the message is whole; read more and try again.
     Incomplete,
+    /// The input is malformed. The string names the part that was refused, so a caller can
+    /// log it without turning a parser into a prose generator.
     Invalid(&'static str),
-    TooLarge { declared: usize, maximum: usize },
+    /// A bound was exceeded. The caller answers `431 Request Header Fields Too Large` for a
+    /// head and drops a body it cannot accept.
+    TooLarge {
+        /// Size the message asked for, in bytes or fields.
+        declared: usize,
+        /// Largest size this parser accepts.
+        maximum: usize,
+    },
 }
 
 impl fmt::Display for ParseError {
@@ -68,21 +92,44 @@ impl fmt::Display for ParseError {
 }
 impl std::error::Error for ParseError {}
 
+/// One parsed request head.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageHead {
+    /// Request method, in the case the client wrote it: `GET`, `SETUP`, `POST`.
     pub method: String,
+    /// Request target, which is a route (`/info`) or an absolute URL.
     pub target: String,
+    /// Protocol and version, such as `RTSP/1.0`.
     pub version: String,
+    /// Header fields in the order they arrived, names lower-cased so lookups can ignore
+    /// case without copying them again.
     pub headers: Vec<(String, String)>,
+    /// Bytes the head occupied, including the terminating `CRLF CRLF`. The body starts
+    /// there.
     pub consumed: usize,
 }
 impl MessageHead {
+    /// Looks up a header field, ignoring case.
+    ///
+    /// A repeated field returns its first value; framing fields a receiver depends on
+    /// (`Content-Length`) are already refused when repeated, and other fields are not.
+    #[must_use]
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
             .find(|(key, _)| key.eq_ignore_ascii_case(name))
             .map(|(_, value)| value.as_str())
     }
+    /// Reads `Content-Length`, bounded by `maximum`.
+    ///
+    /// A message without the header has a zero-length body. Only decimal digits are a
+    /// length: upstream accepts a sign or a hexadecimal prefix, both of which one peer can
+    /// read differently from another, and this port refuses them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError::Invalid`] for a value that is not a decimal length and
+    /// [`ParseError::TooLarge`] when it exceeds `maximum`.
     pub fn content_length(&self, maximum: usize) -> Result<usize, ParseError> {
         let Some(value) = self.header("content-length") else {
             return Ok(0);
@@ -237,6 +284,14 @@ pub fn parse_request_head_with_limits(
     })
 }
 
+/// Takes the first `length` bytes as the body.
+///
+/// Returns [`ParseError::Incomplete`] when the input carries fewer bytes than the head
+/// promised, which is the normal state of a body still arriving in pieces.
+///
+/// # Errors
+///
+/// Returns [`ParseError::Incomplete`] for input shorter than `length`.
 pub fn split_body(input: &[u8], length: usize) -> Result<&[u8], ParseError> {
     input.get(..length).ok_or(ParseError::Incomplete)
 }

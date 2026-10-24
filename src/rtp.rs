@@ -1,21 +1,40 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#![allow(missing_docs)]
-// SPDX-License-Identifier: GPL-3.0-or-later
 //! Bounded RTP packet parsing for AirPlay audio.
+//!
+//! One audio frame arrives as one RTP packet `[12-byte header][payload]`; the payload is the
+//! coded frame and the header's `sequence` and `timestamp` are what a receiver needs to order
+//! and pace it. Only the features an AirPlay client uses are implemented: version 2, an
+//! optional CSRC list, an optional extension and optional padding all parse, while anything
+//! outside the bounds here is refused rather than guessed at.
 
 use crate::wire::ParseError;
 
+/// One parsed RTP packet, borrowing its payload from the datagram.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtpPacket<'a> {
+    /// RTP version, always 2 for a packet this parser accepts.
     pub version: u8,
+    /// Marker bit, which an audio stream sets on the first packet after a silence.
     pub marker: bool,
+    /// Payload type, which AirPlay uses to distinguish media from retransmission requests.
     pub payload_type: u8,
+    /// Sequence number, one more than the previous packet of the stream modulo 2^16.
     pub sequence: u16,
+    /// The client's RTP timestamp: for audio it counts samples at the stream's rate.
     pub timestamp: u32,
+    /// Synchronisation source of the stream.
     pub ssrc: u32,
+    /// The coded frame, with the header, CSRC list, extension and padding removed.
     pub payload: &'a [u8],
 }
 
+/// Parses one RTP packet.
+///
+/// # Errors
+///
+/// Returns [`ParseError::Incomplete`] when the datagram is shorter than its own header
+/// describes, and [`ParseError::Invalid`] for a version other than 2, an extension or padding
+/// length that does not fit the datagram, or padding that would remove the whole payload.
 pub fn parse(packet: &[u8]) -> Result<RtpPacket<'_>, ParseError> {
     if packet.len() < 12 {
         return Err(ParseError::Incomplete);

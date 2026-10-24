@@ -1,27 +1,45 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! FairPlay /fp-setup request/response state handling.
+//! FairPlay `/fp-setup` framing, and the state a connection keeps between its two steps.
 //!
-//! The state machine validates framing and delegates the complete PlayFair transform.
-
-#![allow(missing_docs)]
+//! A client that wants its stream encrypted first asks the receiver for a FairPlay setup
+//! message, then sends a 164-byte handshake that contains the receiver's key material, and
+//! only then sends the 72-byte encrypted key from which the media AES key is decrypted. This
+//! module validates those three messages and keeps the handshake message between them; the
+//! PlayFair transform itself lives in this crate's private `playfair` module.
+//!
+//! The replies are fixed for the receiver's own key material, which is why this is a small
+//! state machine rather than a cipher implementation.
 
 use crate::fairplay_tables::{FP_HEADER, REPLY_MESSAGES};
 
+/// Length of a `/fp-setup` request: the 16-byte message the client sends first.
 pub const SETUP_REQUEST_LEN: usize = 16;
+/// Length of the receiver's `/fp-setup` reply: one of four fixed messages, chosen by mode.
 pub const SETUP_RESPONSE_LEN: usize = 142;
+/// Length of the handshake message that carries the receiver's key material.
 pub const HANDSHAKE_REQUEST_LEN: usize = 164;
+/// Length of the receiver's handshake reply.
 pub const HANDSHAKE_RESPONSE_LEN: usize = 32;
+/// Length of the encrypted media key a client sends once the handshake is complete.
 pub const ENCRYPTED_KEY_LEN: usize = 72;
+/// Length of the media key the encrypted key decrypts to.
 pub const DECRYPTED_KEY_LEN: usize = 16;
 
+/// Why a FairPlay message was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FairPlayError {
+    /// A message had a length other than the one its step requires.
     InvalidLength {
+        /// Length the message had to have.
         expected: usize,
+        /// Length it had.
         actual: usize,
     },
+    /// The message's version byte is not one this receiver answers.
     UnsupportedVersion(u8),
+    /// The setup request asked for a mode outside the four the reply table has.
     InvalidMode(u8),
+    /// The encrypted key arrived before the handshake that key material depends on.
     HandshakeRequired,
     /// The stored handshake message did not pass the PlayFair transform, so the
     /// encrypted key could not be decrypted.
@@ -49,16 +67,32 @@ impl std::fmt::Display for FairPlayError {
 
 impl std::error::Error for FairPlayError {}
 
+/// The FairPlay state of one control connection.
+///
+/// The handshake message is kept because the encrypted key cannot be decrypted without it.
+/// One session serves one connection: two clients do not share a FairPlay exchange.
 #[derive(Debug, Default)]
 pub struct FairPlaySession {
     key_message: Option<[u8; HANDSHAKE_REQUEST_LEN]>,
 }
 
 impl FairPlaySession {
+    /// A session that has not seen a handshake yet.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Answers the first `/fp-setup` request.
+    ///
+    /// The reply is selected by the mode byte and is fixed: it is the receiver's own FairPlay
+    /// key material, not a value derived from the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FairPlayError::InvalidLength`] for a request that is not 16 bytes,
+    /// [`FairPlayError::UnsupportedVersion`] for a version this receiver does not answer, and
+    /// [`FairPlayError::InvalidMode`] for a mode outside the reply table.
     pub fn setup(&mut self, request: &[u8]) -> Result<[u8; SETUP_RESPONSE_LEN], FairPlayError> {
         require_len(request, SETUP_REQUEST_LEN)?;
         require_version(request)?;
@@ -74,6 +108,12 @@ impl FairPlaySession {
         Ok(response)
     }
 
+    /// Answers the 164-byte handshake and keeps it for [`FairPlaySession::decrypt`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FairPlayError::InvalidLength`] for a request that is not 164 bytes and
+    /// [`FairPlayError::UnsupportedVersion`] for a version this receiver does not answer.
     pub fn handshake(
         &mut self,
         request: &[u8],
@@ -91,6 +131,13 @@ impl FairPlaySession {
         Ok(response)
     }
 
+    /// Decrypts the 72-byte media key with the handshake message already received.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FairPlayError::InvalidLength`] for a key that is not 72 bytes,
+    /// [`FairPlayError::HandshakeRequired`] when no handshake has been seen, and
+    /// [`FairPlayError::DecryptionFailed`] when the PlayFair transform rejects the message.
     pub fn decrypt(&self, encrypted_key: &[u8]) -> Result<[u8; DECRYPTED_KEY_LEN], FairPlayError> {
         require_len(encrypted_key, ENCRYPTED_KEY_LEN)?;
         let message = self
@@ -102,6 +149,11 @@ impl FairPlaySession {
         crate::playfair::playfair_decrypt(message, &cipher).ok_or(FairPlayError::DecryptionFailed)
     }
 
+    /// Whether a handshake has been received on this connection.
+    ///
+    /// A client that sends its encrypted key without one is answered an error rather than a
+    /// stream; this is the question a receiver asks before deciding how to answer.
+    #[must_use]
     pub fn handshake_complete(&self) -> bool {
         self.key_message.is_some()
     }

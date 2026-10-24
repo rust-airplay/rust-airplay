@@ -18,10 +18,16 @@ use std::fmt;
 
 /// The audio coding a stream carries.
 ///
-/// `SETUP` does not say which one a client picked; what says it is the stream's own
-/// compression type, which this crate does not read yet, so a caller has to be told
-/// which one it has. Getting it wrong is not silent: a decoder fed one kind of frame
-/// as another fails, which is why the choice is a parameter and not a default.
+/// A client states it as `ct` in the `SETUP` that names its audio stream - `2` for [`Alac`],
+/// `8` for [`AacEld`] - and the receiver passes that declaration to the backend. The value on
+/// [`crate::receiver::Config`] is only the fallback for a client that never says.
+///
+/// The distinction matters because the two codings are not interchangeable: a decoder fed one
+/// kind of frame as the other reports a stream it cannot read, and nothing in the audio alone
+/// says which choice was wrong.
+///
+/// [`Alac`]: AudioCodec::Alac
+/// [`AacEld`]: AudioCodec::AacEld
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioCodec {
     /// Apple Lossless, which is what AirPlay 1 clients send.
@@ -58,6 +64,16 @@ impl AudioCodec {
     /// other in `SETUP`, and upstream takes its decoder from that rather than from a
     /// setting: both are compressed, and a decoder handed the wrong one reports a stream it
     /// cannot read rather than the mix-up.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rust_airplay::AudioCodec;
+    ///
+    /// assert_eq!(AudioCodec::from_compression_type(2), Some(AudioCodec::Alac));
+    /// assert_eq!(AudioCodec::from_compression_type(8), Some(AudioCodec::AacEld));
+    /// assert_eq!(AudioCodec::from_compression_type(3), None);
+    /// ```
     #[must_use]
     pub fn from_compression_type(compression_type: u16) -> Option<Self> {
         match compression_type {
@@ -157,6 +173,19 @@ impl VideoCodec {
 /// high on the slider and a `-22` one low. The first version of this function computed the
 /// two ends and the middle correctly and mirrored everything between them, which is a volume
 /// that is quiet near the top and loud near the bottom.
+///
+/// # Examples
+///
+/// ```
+/// use rust_airplay::airplay_db_to_fraction;
+///
+/// assert_eq!(airplay_db_to_fraction(0.0), 1.0, "0 dB is full volume");
+/// assert_eq!(airplay_db_to_fraction(-30.0), 0.0, "-30 dB is silence");
+/// assert_eq!(airplay_db_to_fraction(-144.0), 0.0, "-144 is the mute signal");
+/// assert!((airplay_db_to_fraction(-15.0) - 0.5).abs() < 1e-9);
+/// assert!(airplay_db_to_fraction(-8.0) > airplay_db_to_fraction(-22.0));
+/// ```
+#[must_use]
 pub fn airplay_db_to_fraction(db: f64) -> f64 {
     const MUTE: f64 = -144.0;
     const LOW_DB: f64 = -30.0;
@@ -215,6 +244,23 @@ impl VolumeCurve {
     }
 
     /// The linear gain a renderer plays at for a slider position.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rust_airplay::VolumeCurve;
+    ///
+    /// let flat = VolumeCurve::default();
+    /// assert!((flat.gain(1.0) - 1.0).abs() < 1e-12);
+    /// assert_eq!(flat.gain(0.0), 0.0);
+    ///
+    /// // The tapered profile is louder than the flat one in the middle of the slider.
+    /// let tapered = VolumeCurve {
+    ///     taper: true,
+    ///     ..VolumeCurve::default()
+    /// };
+    /// assert!(tapered.gain(0.5) > flat.gain(0.5));
+    /// ```
     #[must_use]
     pub fn gain(self, fraction: f64) -> f64 {
         if fraction <= 0.0 {
@@ -232,6 +278,16 @@ pub struct Volume(f64);
 impl Volume {
     /// Full volume, which is what a session starts at: a client that says nothing
     /// about volume is not asking for silence.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rust_airplay::Volume;
+    ///
+    /// assert_eq!(Volume::new(0.5).fraction(), 0.5);
+    /// assert_eq!(Volume::new(2.0), Volume::FULL, "a gain above unity is clamped");
+    /// assert_eq!(Volume::new(-1.0).fraction(), 0.0);
+    /// ```
     pub const FULL: Self = Self(1.0);
 
     /// The volume as a number from `0.0` to `1.0`, which is what a backend's own volume
@@ -471,6 +527,24 @@ struct Counters {
 
 impl NullRenderer {
     /// A renderer that has rendered nothing yet.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    ///
+    /// use rust_airplay::{AudioConfig, AudioFrame, NullRenderer, Renderer};
+    ///
+    /// let renderer = Arc::new(NullRenderer::new());
+    /// let stream = renderer.open_audio(AudioConfig::default()).expect("a stream");
+    /// stream
+    ///     .push(AudioFrame {
+    ///         data: vec![0; 4],
+    ///         timestamp: 0,
+    ///     })
+    ///     .expect("a frame");
+    /// assert_eq!(renderer.audio_frames(), 1);
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }

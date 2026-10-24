@@ -996,11 +996,12 @@ impl RouteHandlers {
     /// Port of `raop_handler_set_parameter`
     /// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:1125-1179`).
     ///
-    /// Upstream reads the body of a `text/parameters` request with `sscanf` and
-    /// hands the result to its media layer; cover art and DMAP metadata go the
-    /// same way. This crate parses the two values strictly, reports them, and
-    /// answers `200` for the content types whose payload belongs to the media
-    /// layer that does not exist yet — it does not claim to have stored them.
+    /// Upstream reads the body of a `text/parameters` request with `sscanf` and hands the
+    /// result to its media layer; cover art and the DMAP listing are routed to callbacks the
+    /// same way. This crate parses every parameter line instead of only the first, reports
+    /// each one, and passes artwork and metadata to the callbacks a caller installed. A
+    /// content type with no callback is answered `200` and dropped, which is what a receiver
+    /// without that feature does.
     fn set_parameter(&mut self, request: &RouteRequest<'_>) -> RouteReply {
         let Some(content_type) = request.head.header("content-type") else {
             // Upstream answers the same status for a request that says nothing

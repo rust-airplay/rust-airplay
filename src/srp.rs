@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Apple-compatible SRP-6a primitives used by AirPlay pair-setup.
 //!
-//! UxPlay uses the 2048-bit RFC 5054 group with SHA-1, but keeps the older
-//! Apple session-key expansion: SHA-1(S || 0u32) concatenated with
-//! SHA-1(S || 1u32). The public API keeps the byte serialization rules
-//! explicit because they are part of the wire compatibility contract.
-
-#![allow(missing_docs)]
+//! UxPlay uses the 2048-bit RFC 5054 group with SHA-1, but keeps the older Apple session-key
+//! expansion: `SHA-1(S || 0u32)` concatenated with `SHA-1(S || 1u32)`. The public API keeps
+//! the byte serialization rules explicit because they are part of the wire compatibility
+//! contract: the same integers encoded with or without leading zero bytes produce different
+//! hashes, and therefore a different key on the two sides.
+//!
+//! [`AppleSrpServer`] is the receiver's half of the exchange: it produces `B`, and given the
+//! client's public value it derives the session key, checks the client's proof and produces
+//! the receiver's own proof. It does not choose the salt, the verifier or the private scalar;
+//! those are inputs, because where a password verifier lives is the caller's decision.
 
 use std::sync::OnceLock;
 
@@ -14,9 +18,13 @@ use num_bigint::BigUint;
 use num_traits::Zero;
 use sha1::{Digest, Sha1};
 
+/// Size of the session key the Apple exchange derives: two SHA-1 digests.
 pub const APPLE_SESSION_KEY_SIZE: usize = 40;
+/// Size of one SHA-1 digest, which is the size of every proof and hash in this module.
 pub const APPLE_SRP_HASH_SIZE: usize = 20;
+/// Size of the 2048-bit SRP modulus in bytes.
 pub const APPLE_SRP_MODULUS_SIZE: usize = 256;
+/// Size of the salt a verifier is derived with.
 pub const APPLE_SRP_SALT_SIZE: usize = 16;
 
 const MODULUS_HEX: &str = concat!(
@@ -32,9 +40,13 @@ const MODULUS_HEX: &str = concat!(
 
 static MODULUS: OnceLock<BigUint> = OnceLock::new();
 
+/// Why an SRP value was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SrpError {
+    /// A value had the wrong size: a salt, a public key or an integer too large for the group.
     InvalidLength(&'static str),
+    /// A value had the right size but is outside the group: zero, or a multiple of the
+    /// modulus.
     InvalidValue(&'static str),
 }
 
@@ -124,6 +136,12 @@ fn server_proof(
     hash(&[&minimal_bytes(client_public), client_proof, session_key])
 }
 
+/// Derives the Apple session key from the premaster secret.
+///
+/// This is not the RFC 5054 key derivation: Apple hashes the premaster secret twice, with a
+/// four-byte counter of zero and one appended, and concatenates the two digests. A client that
+/// implements the RFC instead fails at the proof with no other symptom.
+#[must_use]
 pub fn apple_session_key(premaster_secret_be: &[u8]) -> [u8; APPLE_SESSION_KEY_SIZE] {
     let mut output = [0u8; APPLE_SESSION_KEY_SIZE];
     let first = hash(&[premaster_secret_be, &[0, 0, 0, 0]]);
@@ -133,6 +151,12 @@ pub fn apple_session_key(premaster_secret_be: &[u8]) -> [u8; APPLE_SESSION_KEY_S
     output
 }
 
+/// Derives a labelled key from the session key.
+///
+/// Each pairing step hashes its label in front of the session key
+/// (`upstream/UxPlay/lib/pairing.c:29-30`), which is how one exchange yields several
+/// independent keys without a second handshake.
+#[must_use]
 pub fn apple_proof_key(
     session_key: &[u8; APPLE_SESSION_KEY_SIZE],
     label: &[u8],
@@ -140,6 +164,12 @@ pub fn apple_proof_key(
     hash(&[label, session_key])
 }
 
+/// The receiver's half of one SRP exchange.
+///
+/// It holds the username, salt, verifier and private scalar; every method is `&self`, so one
+/// server value answers both steps of the exchange. The private scalar is the caller's
+/// randomness and must not be reused across exchanges.
+#[derive(Debug)]
 pub struct AppleSrpServer {
     username: Vec<u8>,
     salt: [u8; APPLE_SRP_SALT_SIZE],
@@ -147,14 +177,27 @@ pub struct AppleSrpServer {
     private_b: BigUint,
 }
 
+/// What the receiver sends, and what it checks, in the second step of the exchange.
+#[derive(Debug)]
 pub struct AppleSrpResponse {
+    /// The receiver's public value `B`, in the minimal encoding Apple uses.
     pub public_key: Vec<u8>,
+    /// The shared session key both sides derive.
     pub session_key: [u8; APPLE_SESSION_KEY_SIZE],
+    /// The proof the client must send; compare it with [`constant_time_proof_eq`].
     pub expected_proof: [u8; APPLE_SRP_HASH_SIZE],
+    /// The proof the receiver sends back, which the client checks.
     pub server_proof: [u8; APPLE_SRP_HASH_SIZE],
 }
 
 impl AppleSrpServer {
+    /// Builds a server from a password, deriving the verifier with Apple's rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SrpError::InvalidLength`] for a salt that is not 16 bytes or a private scalar
+    /// too large for the group, and [`SrpError::InvalidValue`] for a zero scalar or a verifier
+    /// outside the group.
     pub fn new(
         username: &[u8],
         password: &[u8],
@@ -168,6 +211,15 @@ impl AppleSrpServer {
         Self::from_verifier(username, &verifier.to_bytes_be(), &salt, private_b)
     }
 
+    /// Builds a server from an already derived verifier.
+    ///
+    /// A caller that stores the verifier instead of the password uses this; the verifier is
+    /// what a long-term pairing record keeps.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SrpError::InvalidValue`] for a zero private scalar or a verifier that is zero
+    /// or not smaller than the modulus.
     pub fn from_verifier(
         username: &[u8],
         verifier: &[u8],
@@ -208,6 +260,13 @@ impl AppleSrpServer {
         Ok(((&multiplier * &self.verifier) + generator_b) % n)
     }
 
+    /// Answers the client's public value with the receiver's proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SrpError::InvalidLength`] for a client public key that is empty or larger
+    /// than the group, and [`SrpError::InvalidValue`] for one that is zero or a multiple of
+    /// the modulus (neither of which has a usable shared secret).
     pub fn respond(&self, client_public_bytes: &[u8]) -> Result<AppleSrpResponse, SrpError> {
         // Apple sends the client public key as one 2048-bit Data block; reject an
         // empty or oversized value before it reaches the big-integer math.
@@ -243,6 +302,11 @@ impl AppleSrpServer {
     }
 }
 
+/// Compares a proof with the expected one without an early exit.
+///
+/// Equal-length inputs take the same time whether they match or not. An input of a different
+/// length is a `false` without a comparison, which is a length leak an attacker already knows.
+#[must_use]
 pub fn constant_time_proof_eq(expected: &[u8; APPLE_SRP_HASH_SIZE], actual: &[u8]) -> bool {
     if actual.len() != expected.len() {
         return false;
