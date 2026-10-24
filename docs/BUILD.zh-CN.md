@@ -44,6 +44,12 @@ cargo package --allow-dirty
 
 打包但不发布，用来在发布前验证 `include` 列表与元数据。`cargo publish` 是发布步骤，在干净的 `main` 工作树上执行。
 
+## 持续集成
+
+`.github/workflows/ci.yml` 在每次 push 和 pull request 时于 Ubuntu 与 Windows 运行：格式检查、测试、doctest、`-D warnings` 下的 clippy 与 rustdoc，以及 `cargo package --list`。
+
+`Publish to crates.io` 由 Actions 页面手动触发。它会重新运行测试与 clippy，然后从 `main` 用仓库 secret `CARGO_REGISTRY_TOKEN` 发布。`dry_run` 只打包与校验，不上传。发布前的提交应包含版本号与变更日志。
+
 ## 播放媒体
 
 播放属于后端，不属于这个 crate。GStreamer 后端是 [rust-airplay-gstream](https://github.com/rust-airplay/rust-airplay-gstream)，构建它需要 GStreamer 开发库；它的 README 按平台列出了依赖，以及运行时会话所需的元素。

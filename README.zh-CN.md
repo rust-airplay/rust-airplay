@@ -1,5 +1,7 @@
 # rust-airplay
 
+[![CI](https://github.com/rust-airplay/rust-airplay/actions/workflows/ci.yml/badge.svg)](https://github.com/rust-airplay/rust-airplay/actions/workflows/ci.yml)
+
 用于构建 AirPlay 1 与 AirPlay 2 接收端的 Rust 库。
 
 它通过 mDNS 广播接收端、应答 AirPlay 控制协议、完成配对、接收投屏与音频、解密两者，并把编码后的帧交给渲染器。它停在编码边界：解码与播放是后端的事，因为一个后端就是一种技术和一棵依赖树。

@@ -1,5 +1,7 @@
 # rust-airplay
 
+[![CI](https://github.com/rust-airplay/rust-airplay/actions/workflows/ci.yml/badge.svg)](https://github.com/rust-airplay/rust-airplay/actions/workflows/ci.yml)
+
 A Rust library for building AirPlay 1 and AirPlay 2 receivers.
 
 It advertises a receiver over mDNS, answers the AirPlay control protocol, pairs clients,

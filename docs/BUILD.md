@@ -55,6 +55,17 @@ cargo package --allow-dirty
 packages the crate without publishing it, which verifies the `include` list and the metadata
 before a release. `cargo publish` is the release step and is done from a clean tree on `main`.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request on Ubuntu and Windows: the
+format check, the tests, the doctests, clippy and rustdoc under `-D warnings`, and
+`cargo package --list`.
+
+`Publish to crates.io` is started by hand from the Actions tab. It runs the tests and clippy
+again, and then publishes from `main` with the token in the `CARGO_REGISTRY_TOKEN` repository
+secret. `dry_run` packages and verifies without uploading. A version bump and a changelog
+entry are part of the commit that precedes it.
+
 ## Playing media
 
 Playing is a backend, not this crate. The GStreamer one is
