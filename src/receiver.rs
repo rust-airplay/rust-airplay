@@ -60,6 +60,15 @@ fn hex(bytes: &[u8]) -> String {
 /// stall a decoder produces and far below anything a receiver would notice holding.
 const QUEUED_FRAMES: usize = 8;
 
+/// How many frames may wait while the video stream is still being opened.
+///
+/// The writer opens the stream on the first frame, and a decoder plus a window take a few
+/// hundred milliseconds. At sixty frames a second that is more than the steady-state depth,
+/// and dropping frames during a GOP is what makes the picture corrupt: every frame after the
+/// gap refers to a frame the decoder never saw. The queue is allowed to grow until the stream
+/// is open, and the backlog is written as fast as the renderer takes it.
+const STARTUP_QUEUED_FRAMES: usize = 120;
+
 /// One frame waiting for the video writer.
 ///
 /// The bytes, the client's timestamp, whether it is a key frame, when it arrived, the
@@ -100,6 +109,13 @@ struct Frames {
     dropped: u64,
     /// Bumped by a flush, so the writer knows the frames it was about to show are stale.
     generation: u64,
+    /// Set after a gap in the stream: only a key frame can follow one.
+    ///
+    /// A frame that is missing is a frame the rest of the group refers to, so a decoder
+    /// handed the next frame without it shows the damage until the group ends. Dropping
+    /// everything up to the next key frame is what turns a moment of overload into a clean
+    /// restart instead of a corrupt picture.
+    resync: bool,
 }
 
 impl FreshestFrames {
@@ -110,10 +126,6 @@ impl FreshestFrames {
         }
     }
 
-    /// Adds a frame, dropping the oldest when the queue is full.
-    ///
-    /// Returns how many are waiting afterwards, so a caller can report a depth without
-    /// asking a second question.
     /// Drops every frame waiting and tells the writer the picture starts over.
     ///
     /// A client sends `FLUSH` when what it played is no longer what it is about to play,
@@ -135,20 +147,45 @@ impl FreshestFrames {
         lock(&self.state).generation
     }
 
-    fn put(&self, frame: QueuedVideo) -> usize {
+    /// Adds a frame, keeping the queue no deeper than `limit`.
+    ///
+    /// `limit` is large while the stream is opening and small once it plays: see
+    /// [`STARTUP_QUEUED_FRAMES`]. A queue that runs past its limit is not trimmed by one
+    /// frame: everything waiting is stale, so it is dropped and the stream restarts at the
+    /// next key frame.
+    ///
+    /// Returns how many are waiting afterwards, so a caller can report a depth without
+    /// asking a second question.
+    fn put(&self, frame: QueuedVideo, limit: usize) -> (usize, bool) {
         let mut state = lock(&self.state);
         if state.ended {
-            return 0;
+            return (0, false);
         }
-        if state.queued.len() >= QUEUED_FRAMES {
-            state.queued.pop_front();
-            state.dropped += 1;
+        let mut restarted = false;
+        if state.resync {
+            if !frame.2 {
+                state.dropped += 1;
+                return (state.queued.len(), false);
+            }
+            state.resync = false;
+        } else if state.queued.len() >= limit {
+            let stale = state.queued.len() as u64;
+            state.queued.clear();
+            state.dropped += stale;
+            state.generation += 1;
+            state.resync = true;
+            restarted = true;
+            if !frame.2 {
+                state.dropped += 1;
+                return (0, restarted);
+            }
+            state.resync = false;
         }
         state.queued.push_back(frame);
         let depth = state.queued.len();
         drop(state);
         self.ready.notify_one();
-        depth
+        (depth, restarted)
     }
 
     /// Takes the next frame if one is waiting, without blocking.
@@ -1290,6 +1327,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
             let opening_writer = opening;
             let writer_renderer = Arc::clone(&mirror_renderer);
             let paused_signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let video_opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let writer_opened = std::sync::Arc::clone(&video_opened);
             let writer_paused = std::sync::Arc::clone(&paused_signal);
             let playing = {
                 std::thread::spawn(move || {
@@ -1360,6 +1399,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
                                 codec,
                             }) {
                                 Ok(stream) => {
+                                    writer_opened.store(true, std::sync::atomic::Ordering::Relaxed);
                                     log::info!(
                                         "media     video stream open in {} ms (at +{} ms), {} frames",
                                         opening_writer.elapsed().as_millis(),
@@ -1612,19 +1652,23 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     // way a dropped frame is one the rest of the stream may depend on.
                     sent += 1;
                     let received = started.elapsed().as_nanos() as u64;
-                    let depth = feed.put((
+                    let limit = if video_opened.load(std::sync::atomic::Ordering::Relaxed) {
+                        QUEUED_FRAMES
+                    } else {
+                        STARTUP_QUEUED_FRAMES
+                    };
+                    let (depth, restarted) = feed.put((
                         frame.data,
                         frame.timestamp,
                         frame.idr,
                         received,
                         info.codec,
                         info.geometry,
-                    ));
-                    if refused == 0 && depth >= QUEUED_FRAMES {
+                    ), limit);
+                    if refused == 0 && restarted {
                         refused = 1;
                         log::warn!(
-                            "rust-airplay: the renderer is {QUEUED_FRAMES} frames behind; \
-                             frames are being dropped and the picture will be incomplete"
+                            "rust-airplay: the renderer fell behind and the queue was                              dropped; the picture restarts at the next key frame"
                         );
                     }
                     if sent % 200 == 0 {
@@ -1918,7 +1962,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{ClockProbe, FreshestFrames, QueuedVideo};
+    use super::{ClockProbe, FreshestFrames, QUEUED_FRAMES, QueuedVideo};
 
     #[test]
     fn a_streaming_report_is_written_out_as_xml() {
@@ -1976,8 +2020,8 @@ mod tests {
         // screen. The writer owns the renderer's stream, so it has to be told too - that is
         // what the generation is for.
         let queue = FreshestFrames::new();
-        assert_eq!(queue.put(frame(1)), 1);
-        assert_eq!(queue.put(frame(2)), 2);
+        assert_eq!(queue.put(frame(1), QUEUED_FRAMES).0, 1);
+        assert_eq!(queue.put(frame(2), QUEUED_FRAMES).0, 2);
         let before = queue.generation();
 
         let after = queue.clear();
@@ -1986,8 +2030,48 @@ mod tests {
         // Nothing is left to take, and the queue is not ended: frames after a flush are
         // the ones that should play.
         assert!(queue.try_take().is_none());
-        assert_eq!(queue.put(frame(3)), 1);
+        assert_eq!(queue.put(frame(3), QUEUED_FRAMES).0, 1);
         assert!(queue.try_take().is_some());
+    }
+
+    #[test]
+    fn a_queue_that_overflows_restarts_at_the_next_key_frame() {
+        // Dropping one frame out of a group leaves every later frame referring to a picture
+        // the decoder never saw, which is the corrupt picture a slow start used to produce.
+        let queue = FreshestFrames::new();
+        assert_eq!(queue.put(frame_before_key(1), 2).0, 1);
+        assert_eq!(queue.put(frame_before_key(2), 2).0, 2);
+        let (depth, restarted) = queue.put(frame_before_key(3), 2);
+        assert!(restarted, "the overflow is reported");
+        assert_eq!(depth, 0, "everything waiting was stale");
+
+        // Frames that are not key frames are dropped until one arrives.
+        assert_eq!(queue.put(frame_before_key(4), 2), (0, false));
+        assert!(queue.try_take().is_none());
+        assert_eq!(queue.put(frame_key(5), 2).0, 1);
+        assert!(queue.try_take().expect("the key frame").2);
+    }
+
+    fn frame_before_key(timestamp: u64) -> QueuedVideo {
+        (
+            vec![0u8; 4],
+            timestamp,
+            false,
+            0,
+            crate::render::VideoCodec::H264,
+            None,
+        )
+    }
+
+    fn frame_key(timestamp: u64) -> QueuedVideo {
+        (
+            vec![0u8; 4],
+            timestamp,
+            true,
+            0,
+            crate::render::VideoCodec::H264,
+            None,
+        )
     }
 
     #[test]
