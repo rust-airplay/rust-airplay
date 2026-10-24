@@ -109,13 +109,11 @@ struct Frames {
     dropped: u64,
     /// Bumped by a flush, so the writer knows the frames it was about to show are stale.
     generation: u64,
-    /// Set after a gap in the stream: only a key frame can follow one.
+    /// Set once the queue has drained below the steady depth after the stream opened.
     ///
-    /// A frame that is missing is a frame the rest of the group refers to, so a decoder
-    /// handed the next frame without it shows the damage until the group ends. Dropping
-    /// everything up to the next key frame is what turns a moment of overload into a clean
-    /// restart instead of a corrupt picture.
-    resync: bool,
+    /// Before that it may grow, because the frames waiting for a pipeline to open are not an
+    /// overflow. Once past it, the strict depth applies for the rest of the session.
+    steady: bool,
 }
 
 impl FreshestFrames {
@@ -147,45 +145,44 @@ impl FreshestFrames {
         lock(&self.state).generation
     }
 
-    /// Adds a frame, keeping the queue no deeper than `limit`.
+    /// Adds a frame, keeping the queue at its depth once the stream is playing.
     ///
-    /// `limit` is large while the stream is opening and small once it plays: see
-    /// [`STARTUP_QUEUED_FRAMES`]. A queue that runs past its limit is not trimmed by one
-    /// frame: everything waiting is stale, so it is dropped and the stream restarts at the
-    /// next key frame.
+    /// While the video stream is still opening the queue may grow to
+    /// [`STARTUP_QUEUED_FRAMES`]; after that it is allowed to drain back to
+    /// [`QUEUED_FRAMES`] before the strict depth applies again. Switching straight to the
+    /// strict depth would judge the frames that were waiting for the pipeline to open as an
+    /// overflow.
     ///
-    /// Returns how many are waiting afterwards, so a caller can report a depth without
-    /// asking a second question.
-    fn put(&self, frame: QueuedVideo, limit: usize) -> (usize, bool) {
+    /// Beyond the depth the oldest frame goes, because what the renderer should show is the
+    /// newest picture there is. That frame may be one a later frame refers to, which is why a
+    /// drop is reported: the picture can be damaged until the next key frame arrives.
+    ///
+    /// Returns how many are waiting afterwards and whether this call dropped a frame, so a
+    /// caller can report a depth without asking a second question.
+    fn put(&self, frame: QueuedVideo, opened: bool) -> (usize, bool) {
         let mut state = lock(&self.state);
         if state.ended {
             return (0, false);
         }
-        let mut restarted = false;
-        if state.resync {
-            if !frame.2 {
-                state.dropped += 1;
-                return (state.queued.len(), false);
-            }
-            state.resync = false;
-        } else if state.queued.len() >= limit {
-            let stale = state.queued.len() as u64;
-            state.queued.clear();
-            state.dropped += stale;
-            state.generation += 1;
-            state.resync = true;
-            restarted = true;
-            if !frame.2 {
-                state.dropped += 1;
-                return (0, restarted);
-            }
-            state.resync = false;
+        if opened && !state.steady && state.queued.len() < QUEUED_FRAMES {
+            state.steady = true;
+        }
+        let limit = if state.steady {
+            QUEUED_FRAMES
+        } else {
+            STARTUP_QUEUED_FRAMES
+        };
+        let mut dropped = false;
+        if state.queued.len() >= limit {
+            state.queued.pop_front();
+            state.dropped += 1;
+            dropped = true;
         }
         state.queued.push_back(frame);
         let depth = state.queued.len();
         drop(state);
         self.ready.notify_one();
-        (depth, restarted)
+        (depth, dropped)
     }
 
     /// Takes the next frame if one is waiting, without blocking.
@@ -1652,23 +1649,19 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     // way a dropped frame is one the rest of the stream may depend on.
                     sent += 1;
                     let received = started.elapsed().as_nanos() as u64;
-                    let limit = if video_opened.load(std::sync::atomic::Ordering::Relaxed) {
-                        QUEUED_FRAMES
-                    } else {
-                        STARTUP_QUEUED_FRAMES
-                    };
-                    let (depth, restarted) = feed.put((
+                    let opened = video_opened.load(std::sync::atomic::Ordering::Relaxed);
+                    let (depth, dropped) = feed.put((
                         frame.data,
                         frame.timestamp,
                         frame.idr,
                         received,
                         info.codec,
                         info.geometry,
-                    ), limit);
-                    if refused == 0 && restarted {
+                    ), opened);
+                    if refused == 0 && dropped {
                         refused = 1;
                         log::warn!(
-                            "rust-airplay: the renderer fell behind and the queue was                              dropped; the picture restarts at the next key frame"
+                            "rust-airplay: the renderer fell behind; the oldest frame was                              dropped and the picture may be damaged until the next key frame"
                         );
                     }
                     if sent % 200 == 0 {
@@ -2020,8 +2013,8 @@ mod tests {
         // screen. The writer owns the renderer's stream, so it has to be told too - that is
         // what the generation is for.
         let queue = FreshestFrames::new();
-        assert_eq!(queue.put(frame(1), QUEUED_FRAMES).0, 1);
-        assert_eq!(queue.put(frame(2), QUEUED_FRAMES).0, 2);
+        assert_eq!(queue.put(frame(1), true).0, 1);
+        assert_eq!(queue.put(frame(2), true).0, 2);
         let before = queue.generation();
 
         let after = queue.clear();
@@ -2030,48 +2023,37 @@ mod tests {
         // Nothing is left to take, and the queue is not ended: frames after a flush are
         // the ones that should play.
         assert!(queue.try_take().is_none());
-        assert_eq!(queue.put(frame(3), QUEUED_FRAMES).0, 1);
+        assert_eq!(queue.put(frame(3), true).0, 1);
         assert!(queue.try_take().is_some());
     }
 
     #[test]
-    fn a_queue_that_overflows_restarts_at_the_next_key_frame() {
-        // Dropping one frame out of a group leaves every later frame referring to a picture
-        // the decoder never saw, which is the corrupt picture a slow start used to produce.
+    fn a_slow_start_grows_the_queue_and_a_drain_comes_back_to_its_depth() {
+        // The frames that wait for the pipeline to open are not an overflow: at sixty a
+        // second, a quarter of a second of opening is fifteen of them, and the first version
+        // of this limit dropped that whole opening burst. The queue may grow while the
+        // stream is closed, and is only limited again once it has drained.
         let queue = FreshestFrames::new();
-        assert_eq!(queue.put(frame_before_key(1), 2).0, 1);
-        assert_eq!(queue.put(frame_before_key(2), 2).0, 2);
-        let (depth, restarted) = queue.put(frame_before_key(3), 2);
-        assert!(restarted, "the overflow is reported");
-        assert_eq!(depth, 0, "everything waiting was stale");
+        for timestamp in 0..30u64 {
+            let (depth, dropped) = queue.put(frame(timestamp), false);
+            assert!(!dropped, "a closed stream must not drop frames");
+            assert_eq!(depth as u64, timestamp + 1);
+        }
+        // Opening the stream does not judge that backlog as an overflow either.
+        let (depth, dropped) = queue.put(frame(30), true);
+        assert!(!dropped);
+        assert_eq!(depth, 31);
 
-        // Frames that are not key frames are dropped until one arrives.
-        assert_eq!(queue.put(frame_before_key(4), 2), (0, false));
-        assert!(queue.try_take().is_none());
-        assert_eq!(queue.put(frame_key(5), 2).0, 1);
-        assert!(queue.try_take().expect("the key frame").2);
-    }
-
-    fn frame_before_key(timestamp: u64) -> QueuedVideo {
-        (
-            vec![0u8; 4],
-            timestamp,
-            false,
-            0,
-            crate::render::VideoCodec::H264,
-            None,
-        )
-    }
-
-    fn frame_key(timestamp: u64) -> QueuedVideo {
-        (
-            vec![0u8; 4],
-            timestamp,
-            true,
-            0,
-            crate::render::VideoCodec::H264,
-            None,
-        )
+        // Draining back down to the steady depth happens by taking frames; once below it,
+        // the strict depth applies and the oldest frame goes.
+        while queue.try_take().is_some() {}
+        for timestamp in 40..48u64 {
+            assert!(!queue.put(frame(timestamp), true).1);
+        }
+        let (depth, dropped) = queue.put(frame(48), true);
+        assert!(dropped, "the steady depth drops the oldest frame");
+        assert_eq!(depth, QUEUED_FRAMES);
+        assert_eq!(queue.try_take().expect("a frame").1, 41);
     }
 
     #[test]
