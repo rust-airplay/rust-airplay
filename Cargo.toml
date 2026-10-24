@@ -1,6 +1,6 @@
 [package]
 name = "rust-airplay"
-description = "AirPlay 1/2 receiver: the protocol, the media session and the renderer boundary"
+description = "A library for building AirPlay 1 and AirPlay 2 receivers: the protocol, the media sessions and the renderer boundary"
 repository = "https://github.com/rust-airplay/rust-airplay"
 homepage = "https://github.com/rust-airplay/rust-airplay"
 documentation = "https://docs.rs/rust-airplay"

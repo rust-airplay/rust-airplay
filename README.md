@@ -1,6 +1,6 @@
 # rust-airplay
 
-An AirPlay 1 and AirPlay 2 receiver, as a library.
+A Rust library for building AirPlay 1 and AirPlay 2 receivers.
 
 It advertises a receiver over mDNS, answers the AirPlay control protocol, pairs clients,
 receives screen mirroring and audio, decrypts both, and hands coded frames to a renderer. It

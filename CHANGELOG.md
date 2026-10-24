@@ -2,8 +2,8 @@
 
 ## 0.1.0
 
-The first release: an AirPlay 1 and AirPlay 2 receiver as a library, and the renderer boundary
-a playback backend implements.
+The first release: the protocol and media library for building AirPlay 1 and AirPlay 2
+receivers, and the renderer boundary a playback backend implements.
 
 ### Protocol
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! An AirPlay 1 and AirPlay 2 receiver: the protocol, the media sessions, and the boundary a
-//! playback backend plugs into.
+//! A library for building AirPlay 1 and AirPlay 2 receivers: the protocol, the media sessions,
+//! and the boundary a playback backend plugs into.
 //!
 //! The crate answers a client from the moment it is discovered until its streams end:
 //!
