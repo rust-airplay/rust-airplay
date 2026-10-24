@@ -104,6 +104,21 @@ pub struct Plist {
 
 impl Plist {
     /// Parses a binary or XML property list, bounded by [`MAX_PLIST_BYTES`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rust_airplay::plist::{self, Plist};
+    ///
+    /// let value = plist::dictionary([
+    ///     ("name", "Living room".into()),
+    ///     ("port", 7000u64.into()),
+    /// ]);
+    /// let encoded = Plist::from_value(value).encode_binary().expect("encoded");
+    /// let parsed = Plist::parse(&encoded).expect("parsed");
+    /// assert_eq!(parsed.get_string("name").expect("name"), "Living room");
+    /// assert_eq!(parsed.get_unsigned("port").expect("port"), 7000);
+    /// ```
     pub fn parse(bytes: &[u8]) -> Result<Self, PlistError> {
         Self::parse_with_maximum(bytes, MAX_PLIST_BYTES)
     }

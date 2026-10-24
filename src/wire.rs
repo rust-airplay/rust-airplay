@@ -153,6 +153,18 @@ impl MessageHead {
 }
 
 /// Parses one request head bounded by [`DEFAULT_MAX_HEAD`].
+///
+/// # Examples
+///
+/// ```
+/// use rust_airplay::wire::parse_request_head;
+///
+/// let head = parse_request_head(b"SETUP rtsp://receiver/1 RTSP/1.0\r\nCSeq: 3\r\n\r\n")
+///     .expect("a complete request");
+/// assert_eq!(head.method, "SETUP");
+/// assert_eq!(head.target, "rtsp://receiver/1");
+/// assert_eq!(head.header("cseq"), Some("3"));
+/// ```
 pub fn parse_request_head(input: &[u8]) -> Result<MessageHead, ParseError> {
     parse_request_head_with_maximum(input, DEFAULT_MAX_HEAD)
 }

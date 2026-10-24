@@ -54,6 +54,26 @@
 //! crate, and everything a program would otherwise have to know - the PIN, artwork, metadata,
 //! the client list, where a trace goes - is a value or a callback on [`receiver::Config`].
 //!
+//! # Logging
+//!
+//! The crate never prints. It records through the [`log`] crate: session milestones at
+//! `info`, the request trace at `debug`, and anything a program should see at `warn`. A
+//! program installs the logger and chooses the filter, so the same library serves a quiet
+//! receiver and a diagnostic run.
+//!
+//! [`receiver::Config::trace_log`] writes the request trace to a file whether or not the
+//! console shows it, which is how a session is reconstructed after the fact.
+//!
+//! # Examples
+//!
+//! The repository ships a complete renderer in `examples/recorder.rs`. It implements the
+//! whole [`render::Renderer`] contract and is compiled by `cargo test --all-targets`, so it can
+//! be read as the shortest working backend.
+//!
+//! # Cargo features
+//!
+//! None. Every dependency is required, and there is one build configuration.
+//!
 //! # Minimum supported Rust version
 //!
 //! 1.85, because the crate is written in the 2024 edition. Raising it is a breaking change and
@@ -62,8 +82,18 @@
 //! # Licence
 //!
 //! GPL-3.0-or-later, because parts of it are translations of GPL and LGPL sources. A program
-//! that links this crate is bound by the same licence; see the repository's `README.md` and
-//! `THIRD_PARTY_NOTICES.md`.
+//! that links this crate is bound by the same licence; see the repository's
+//! [README](https://github.com/rust-airplay/rust-airplay#readme) and
+//! [THIRD_PARTY_NOTICES](https://github.com/rust-airplay/rust-airplay/blob/main/THIRD_PARTY_NOTICES.md).
+//!
+//! # See also
+//!
+//! - [The backend guide](https://github.com/rust-airplay/rust-airplay/blob/main/docs/BACKEND.md):
+//!   the renderer contract, in the order a backend meets it
+//! - [The architecture](https://github.com/rust-airplay/rust-airplay/blob/main/docs/ARCHITECTURE.md):
+//!   the crates and the path a session takes
+//! - [The API guide](https://github.com/rust-airplay/rust-airplay/blob/main/docs/API.md):
+//!   a map of the types this rustdoc describes in detail
 
 pub mod control;
 pub mod crypto;

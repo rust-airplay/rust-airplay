@@ -293,11 +293,29 @@ pub struct Advertiser {
 impl Advertiser {
     /// Announces `advertisement` on every interface the responder finds.
     ///
+    /// Dropping the returned value withdraws both records.
+    ///
     /// # Errors
     ///
     /// Returns [`DiscoveryError`] when the responder cannot start or a record
     /// cannot be built or registered, for example when a field is not a valid
     /// DNS label.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use rust_airplay::discovery::{Advertisement, Advertiser, Protection};
+    /// use rust_airplay::server::DeviceIdentity;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let identity = DeviceIdentity::default();
+    /// let advertisement = Advertisement::new(&identity, 7000, Protection::None);
+    /// let advertiser = Advertiser::register(&advertisement)?;
+    /// // The receiver runs here; dropping `advertiser` withdraws it.
+    /// drop(advertiser);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn register(advertisement: &Advertisement) -> Result<Self, DiscoveryError> {
         let daemon =
             ServiceDaemon::new().map_err(|error| DiscoveryError::Daemon(error.to_string()))?;

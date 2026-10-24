@@ -8,6 +8,17 @@
 //!
 //! The conversion is exact in both directions: the fraction is scaled with integer arithmetic,
 //! so a timestamp survives a round trip to within the precision the wire format can carry.
+//!
+//! # Examples
+//!
+//! ```
+//! use rust_airplay::ntp;
+//!
+//! let nanos = 1_700_000_000_000_000_000;
+//! let wire = ntp::unix_nanos_to_timestamp(nanos).expect("within era 0");
+//! let back = ntp::timestamp_to_unix_nanos(&wire).expect("a valid timestamp");
+//! assert!(back.abs_diff(nanos) <= 1);
+//! ```
 
 use crate::wire::ParseError;
 

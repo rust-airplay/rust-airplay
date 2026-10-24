@@ -190,6 +190,18 @@ pub fn aes128_gcm16_decrypt(
 /// Apple pairing setup: a key or IV
 /// of any length other than 16 bytes is rejected with
 /// [`CryptoError::InvalidLength`]. Returns the ciphertext and its tag.
+///
+/// # Examples
+///
+/// ```
+/// use rust_airplay::crypto::{aes128_gcm16_decrypt, aes128_gcm16_encrypt};
+///
+/// let key = [0x11; 16];
+/// let nonce = [0x22; 16];
+/// let (ciphertext, tag) = aes128_gcm16_encrypt(&key, &nonce, b"pairing").expect("sealed");
+/// let plaintext = aes128_gcm16_decrypt(&key, &nonce, &ciphertext, &tag).expect("opened");
+/// assert_eq!(plaintext, b"pairing");
+/// ```
 pub fn aes128_gcm16_encrypt(
     key: &[u8],
     iv: &[u8],
@@ -217,6 +229,17 @@ pub fn x25519_public(private_key: &[u8; 32]) -> [u8; 32] {
 
 /// The X25519 shared secret between a private scalar and a peer public key.
 #[must_use]
+/// # Examples
+///
+/// ```
+/// use rust_airplay::crypto::{x25519_public, x25519_shared};
+///
+/// let alice = [0x11; 32];
+/// let bob = [0x22; 32];
+/// let from_alice = x25519_shared(&alice, &x25519_public(&bob));
+/// let from_bob = x25519_shared(&bob, &x25519_public(&alice));
+/// assert_eq!(from_alice, from_bob);
+/// ```
 pub fn x25519_shared(private_key: &[u8; 32], peer_public: &[u8; 32]) -> [u8; 32] {
     x25519(*private_key, *peer_public)
 }

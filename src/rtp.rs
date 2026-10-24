@@ -6,6 +6,22 @@
 //! and pace it. Only the features an AirPlay client uses are implemented: version 2, an
 //! optional CSRC list, an optional extension and optional padding all parse, while anything
 //! outside the bounds here is refused rather than guessed at.
+//!
+//! # Examples
+//!
+//! ```
+//! use rust_airplay::rtp;
+//!
+//! // A twelve-byte header: version 2, payload type 96, sequence 1, timestamp 480.
+//! let packet = [
+//!     0x80, 96, 0x00, 0x01, 0x00, 0x00, 0x01, 0xe0, 0, 0, 0, 0, 1, 2, 3, 4,
+//! ];
+//! let parsed = rtp::parse(&packet).expect("an audio packet");
+//! assert_eq!(parsed.version, 2);
+//! assert_eq!(parsed.sequence, 1);
+//! assert_eq!(parsed.timestamp, 480);
+//! assert_eq!(parsed.payload, [1, 2, 3, 4]);
+//! ```
 
 use crate::wire::ParseError;
 

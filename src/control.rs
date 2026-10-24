@@ -223,6 +223,18 @@ pub enum Dispatch {
 /// The protocol string is compared exactly, so `RTSP/2.0` selects no route. The HLS rule is
 /// checked before the RTSP and HTTP tables, because an HLS request is recognised by its headers
 /// rather than by a method.
+///
+/// # Examples
+///
+/// ```
+/// use rust_airplay::control::{Dispatch, RequestFacts, Route, dispatch};
+/// use rust_airplay::wire::parse_request_head;
+///
+/// let head = parse_request_head(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n")
+///     .expect("request");
+/// let facts = RequestFacts::from_head(&head);
+/// assert_eq!(dispatch(&facts), Dispatch::Local(Route::Options));
+/// ```
 pub fn dispatch(facts: &RequestFacts<'_>) -> Dispatch {
     if facts.is_hls_request() {
         return classify(Route::Hls);

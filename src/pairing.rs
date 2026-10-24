@@ -41,6 +41,15 @@ pub fn derive_pair_verify_keys(shared_secret: &[u8; X25519_KEY_SIZE]) -> PairVer
 }
 
 /// Key and IV of `/pair-setup-pin` step 3, derived from the SRP session key
+/// # Examples
+///
+/// ```
+/// use rust_airplay::pairing::derive_pair_setup_keys;
+///
+/// let keys = derive_pair_setup_keys(&[0x33; 32]);
+/// assert_eq!(keys.key.len(), 16);
+/// assert_ne!(keys.key, keys.iv);
+/// ```
 pub fn derive_pair_setup_keys(session_key: &[u8]) -> PairVerifyKeys {
     let key_hash = sha512_concat(&[b"Pair-Setup-AES-Key", session_key]);
     let iv_hash = sha512_concat(&[b"Pair-Setup-AES-IV", session_key]);

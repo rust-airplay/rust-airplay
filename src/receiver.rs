@@ -316,6 +316,20 @@ pub type ClientCallback = Arc<dyn Fn(&[u8; 32]) + Send + Sync>;
 /// environment, does not choose a path, and does not parse a command line. That keeps it
 /// testable, and keeps policy — where an identity lives, which port to prefer, what to
 /// print — in the program that runs it.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+/// use std::time::Duration;
+///
+/// use rust_airplay::{Config, NullRenderer};
+///
+/// let mut config = Config::new("Living room", [0x2a; 32], Arc::new(NullRenderer::new()));
+/// config.port = 7001;
+/// config.audio_latency = Duration::from_millis(100);
+/// assert_eq!(config.name, "Living room");
+/// ```
 #[derive(Clone)]
 pub struct Config {
     /// The name clients see in their AirPlay menu.

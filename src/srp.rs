@@ -198,6 +198,20 @@ impl AppleSrpServer {
     /// Returns [`SrpError::InvalidLength`] for a salt that is not 16 bytes or a private scalar
     /// too large for the group, and [`SrpError::InvalidValue`] for a zero scalar or a verifier
     /// outside the group.
+    /// # Examples
+    ///
+    /// ```
+    /// use rust_airplay::srp::AppleSrpServer;
+    ///
+    /// let server = AppleSrpServer::new(
+    ///     b"AA:BB:CC:DD:EE:FF",
+    ///     b"1234",
+    ///     &[0x11; 16],
+    ///     &[0x22; 32],
+    /// )
+    /// .expect("an SRP server");
+    /// assert_eq!(server.server_public().expect("public value").len(), 256);
+    /// ```
     pub fn new(
         username: &[u8],
         password: &[u8],
