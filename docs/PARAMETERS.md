@@ -4,9 +4,9 @@ Chinese: [PARAMETERS.zh-CN.md](PARAMETERS.zh-CN.md).
 
 UxPlay is a program, and everything it can be told is a command-line option. This project is
 a library, so the same decisions have to be reachable as values. This page maps one to the
-other, in both directions, and says what is implemented and what is planned. A reader should
-be able to look up an upstream option here and know where the equivalent lives - or that it
-does not exist yet.
+other, in both directions, and says what is implemented and what is not. A reader should be
+able to look up an upstream option here and know where the equivalent lives - or that there is
+none, and why.
 
 Three surfaces are involved:
 
@@ -27,7 +27,7 @@ Three surfaces are involved:
 | `-m [mac]` | the advertised hardware address | `Config::device_id`; derived from the seed when `None` |
 | `-key [fn]` | the private key, and its file | `Config::seed`; storing it is the program's job |
 | `-reg [fn]` | the register of clients already paired | `Config::clients` and `Config::on_client` |
-| `-p n` | the control port | `Config::port` |
+| `-p n` | a base port for the whole layout | `Config::port` for the control port, `Config::ports` for the rest |
 | `-p` (no value) | upstream's fixed media port layout | `Config::ports` set to `MediaPorts::legacy()` |
 | `-p` with explicit ports | fixed timing, control, data and mirror ports | `Config::ports` |
 | `-al x` | audio delay reported to the client | `Config::audio_latency` |
@@ -35,7 +35,7 @@ Three surfaces are involved:
 | `-fps n` | the highest frame rate asked of the client | `Config::display.max_fps` |
 | `-o` | overscanned display | `Config::display.overscanned` |
 | `-h265` | allow HEVC and offer 4K | `Config::features` with bit 42 set, and `Config::display` at 3840x2160; the program decides the default size |
-| `-hls` (feature bit only) | tell clients HLS is supported | `Config::features` with bit 4 set; the routes themselves are still `501` |
+| `-hls` (feature bit only) | tell clients HLS is supported | not supported: `Config::features` can carry bit 4, but nothing implements the routes and the list below explains why it should stay clear |
 | `-nohold` | a new client takes over from the current one | `Config::nohold` |
 | `-reset n` | close a session with no feedback for n seconds | `Config::feedback_timeout` |
 | `-FPSdata` | show the client's streaming reports | `Config::log_streaming_reports` |
@@ -52,11 +52,14 @@ Three surfaces are involved:
 | `-vs ...` | the video sink | `Options::video_sink` |
 | `-vp ...` | the video parser | `Options::video_parser` |
 | `-vd ...` | the video decoder | `Options::video_decoder` |
-| `-d` and friends | logging | the `log` crate; the program installs a logger |
 
 Two behaviours are parameters even though upstream has no option for them, because a
 library cannot decide them: `Config::pace_video` (hold video to its capture spacing) and
 `Config::renderer` (what plays the media).
+
+`-pw` deserves a note: upstream draws a password at each connection when the option carries
+none, while `parlor-cli` draws one for the process and prints it. The library value is a fixed
+`Config::password`, so a program can implement either behaviour around it.
 
 ## Backend-only
 
@@ -69,7 +72,7 @@ this crate:
 | `-vc ...` | the video converter | part of `Options::video_decoder` |
 | `-v4l2`, `-bt709`, `-srgb` | platform decoding and colour | pipeline strings, not yet surfaced |
 | `-f {H,V,I}`, `-r {R,L}` | flip and rotate | not yet surfaced |
-| `-o`, `-fs` | overscan, full screen | sink properties, not yet surfaced |
+| `-fs` | full screen | a sink property, not yet surfaced; overscan is `Config::display.overscanned` |
 | `-vs 0`, `-as 0`, `-a` | no video window, no audio | `--render null`, or a null sink in the backend |
 | `-vrtp`, `-artp` | re-pay the decoded stream somewhere else | not implemented |
 | `-nc`, `-nofreeze` | window lifetime after a session | not implemented |
@@ -79,7 +82,7 @@ this crate:
 | Upstream | What it does | Where |
 | --- | --- | --- |
 | `-key [fn]`, `-reg [fn]` | where the seed and the client list are stored | the program decides; `parlor-cli` keeps both under the user's application data directory and its `-key`/`-reg` move them |
-| `-d` | log level and format | the program's logger; `parlor-cli` turns it into a debug level |
+| `-d`, `-q`, `-v`, `--log-level` | log level and format | the program's logger; `parlor-cli` maps them to `log` levels |
 
 ## Where this leaves the table
 
@@ -94,7 +97,7 @@ These are not planned, and the reason is a decision rather than missing time.
 
 | Upstream | Why not |
 | --- | --- |
-| `-hls`, `-lang`, `-slang`, `-custom`, `-rpi` | HTTP Live Streaming needs a player, a playlist fetcher and an event channel to the client; the receiver routes were removed rather than answered `200` while doing nothing, and the feature bits stay clear. |
+| `-hls`, `-lang`, `-slang`, `-custom`, `-rpi` | HTTP Live Streaming needs a player, a playlist fetcher and an event channel to the client. The routes answer `501` rather than `200` while doing nothing, and a receiver should not advertise bit 4 for a feature it cannot serve. |
 | `-mp4` | Recording needs the media path to keep a muxer and a file between sessions; the library owns neither a file nor a codec. |
 | `-p2p` | Apple peer-to-peer discovery has no equivalent in `mdns-sd`; the discovery layer would have to grow a second transport. |
 | `-scrsv` | A screensaver is the program's business, and this library is the program's library. |

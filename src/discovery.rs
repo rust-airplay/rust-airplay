@@ -112,9 +112,21 @@ pub struct Advertisement {
 impl Advertisement {
     /// Builds the records a receiver with `identity` advertises on `port`.
     ///
-    /// `identity.public_key` is the `pk` field, so a caller that pairs clients
-    /// has to build the identity from the same key it signs with
-    /// (`docs/ARCHITECTURE.md`).
+    /// `identity.public_key` is the `pk` field, so a caller that pairs clients has to build
+    /// the identity from the same key it signs with (`docs/ARCHITECTURE.md`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rust_airplay::discovery::{Advertisement, Protection};
+    /// use rust_airplay::server::DeviceIdentity;
+    ///
+    /// let identity = DeviceIdentity::default();
+    /// let advertisement = Advertisement::new(&identity, 7000, Protection::None);
+    /// let (airplay, raop) = advertisement.txt_records();
+    /// assert!(!airplay.is_empty());
+    /// assert!(!raop.is_empty());
+    /// ```
     pub fn new(identity: &DeviceIdentity, port: u16, protection: Protection) -> Self {
         let features = features_string(identity.features);
         let public_key = hex(&identity.public_key);

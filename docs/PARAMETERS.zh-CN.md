@@ -2,7 +2,7 @@
 
 English: [PARAMETERS.md](PARAMETERS.md)。
 
-UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项目是一个库，同样的决定必须以值的形式可达。本页把它们双向对照，并说明哪些已实现、哪些是计划。读者应当能查到某个上游参数，知道对应物在哪里——或者知道它还不存在。
+UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项目是一个库，同样的决定必须以值的形式可达。本页把它们双向对照，并说明哪些已实现、哪些没有。读者应当能查到某个上游参数，知道对应物在哪里——或者知道它没有对应物，以及为什么。
 
 涉及三处：
 
@@ -21,7 +21,7 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-m [mac]` | 广播的硬件地址 | `Config::device_id`；为 `None` 时由种子派生 |
 | `-key [fn]` | 私钥及其文件 | `Config::seed`；保存它是程序的职责 |
 | `-reg [fn]` | 已配对客户端的名单 | `Config::clients` 与 `Config::on_client` |
-| `-p n` | 控制端口 | `Config::port` |
+| `-p n` | 整套布局的基准端口 | 控制端口对应 `Config::port`，其余对应 `Config::ports` |
 | `-p`（无值） | 上游的固定媒体端口布局 | `Config::ports` 设为 `MediaPorts::legacy()` |
 | `-p` 后跟显式端口 | 固定的 timing、control、data、mirror 端口 | `Config::ports` |
 | `-al x` | 报告给客户端的音频延迟 | `Config::audio_latency` |
@@ -29,7 +29,7 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-fps n` | 要求客户端的最高帧率 | `Config::display.max_fps` |
 | `-o` | overscan 显示 | `Config::display.overscanned` |
 | `-h265` | 允许 HEVC 并提供 4K | `Config::features` 置第 42 位，且 `Config::display` 为 3840x2160；默认尺寸由程序决定 |
-| `-hls`（仅 feature 位） | 告知客户端支持 HLS | `Config::features` 置第 4 位；路由本身仍返回 `501` |
+| `-hls`（仅 feature 位） | 告知客户端支持 HLS | 不支持：`Config::features` 可以带第 4 位，但没有任何路由实现，下面的清单说明了为何应保持关闭 |
 | `-nohold` | 新客户端顶替当前连接 | `Config::nohold` |
 | `-reset n` | 无反馈超过 n 秒就关闭会话 | `Config::feedback_timeout` |
 | `-FPSdata` | 显示客户端的流报告 | `Config::log_streaming_reports` |
@@ -46,9 +46,10 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-vs ...` | 视频 sink | 后端的 `Options::video_sink` |
 | `-vp ...` | 视频 parser | 后端的 `Options::video_parser` |
 | `-vd ...` | 视频解码器 | 后端的 `Options::video_decoder` |
-| `-d` 等 | 日志 | `log` crate；由程序安装 logger |
 
 有两个行为在上游没有对应参数，但库同样不能替调用方决定：`Config::pace_video`（按采集间隔节流视频）与 `Config::renderer`（由什么播放媒体）。
+
+`-pw` 需要一句说明：上游在该参数不带口令时于每次连接生成一个口令，而 `parlor-cli` 为整个进程生成一个并打印。库里的值是固定的 `Config::password`，程序可以围绕它实现任一种行为。
 
 ## 只属于后端
 
@@ -60,7 +61,7 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | `-vc ...` | 视频转换器 | 属于 `Options::video_decoder` |
 | `-v4l2`、`-bt709`、`-srgb` | 平台解码与色彩 | 管线字符串，尚未暴露 |
 | `-f {H,V,I}`、`-r {R,L}` | 翻转与旋转 | 尚未暴露 |
-| `-fs` | 全屏 | sink 属性，尚未暴露 |
+| `-fs` | 全屏 | sink 属性，尚未暴露；overscan 由 `Config::display.overscanned` 控制 |
 | `-vs 0`、`-as 0`、`-a` | 不要视频窗口、不要音频 | `--render null`，或后端里的空 sink |
 | `-vrtp`、`-artp` | 把解码后的流再打包发往别处 | 未实现 |
 | `-nc`、`-nofreeze` | 会话结束后窗口的处理 | 未实现 |
@@ -70,7 +71,7 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 | 上游参数 | 作用 | 位置 |
 | --- | --- | --- |
 | `-key [fn]`、`-reg [fn]` | 种子与客户端名单保存位置 | 由程序决定；`parlor-cli` 放在用户应用数据目录下，`-key`/`-reg` 可以搬动它们 |
-| `-d` | 日志级别与格式 | 程序的 logger；`parlor-cli` 把它变成 debug 级别 |
+| `-d`、`-q`、`-v`、`--log-level` | 日志级别与格式 | 程序的 logger；`parlor-cli` 把它们映射到 `log` 级别 |
 
 ## 表格到此为止
 
@@ -82,7 +83,7 @@ UxPlay 是一个程序，它能被配置的一切都是命令行参数。本项�
 
 | 上游参数 | 原因 |
 | --- | --- |
-| `-hls`、`-lang`、`-slang`、`-custom`、`-rpi` | HTTP Live Streaming 需要播放器、播放列表抓取与到客户端的事件通道；相关路由已改为明确的错误而不是"回 200 却什么都不做"，feature 位保持关闭。 |
+| `-hls`、`-lang`、`-slang`、`-custom`、`-rpi` | HTTP Live Streaming 需要播放器、播放列表抓取与到客户端的事件通道。相关路由返回 `501` 而不是"回 200 却什么都不做"，接收端也不应为它无法提供的功能广播第 4 位。 |
 | `-mp4` | 录制需要媒体路径在会话之间保留封装器与文件；库既不拥有文件，也不拥有编解码器。 |
 | `-p2p` | Apple 的点对点发现在 `mdns-sd` 中没有对应物，发现层需要再长出一种传输。 |
 | `-scrsv` | 屏保是程序的职责，这个库是程序用的库。 |
