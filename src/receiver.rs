@@ -716,7 +716,6 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // one that never completed a session is not known yet, which is the honest limit of
     // remembering keys only once a session carries them.
     let known = Arc::clone(&config.clients);
-    log::info!("clients   {} remembered", lock(&known).len());
 
     let mut state = PairingState::new(seed, config.pin).with_client_registered({
         let known = Arc::clone(&known);
@@ -841,7 +840,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     });
 
     let handlers_state = Arc::clone(&state);
-    log::info!("waiting for a client (Ctrl+C to stop)");
+    log::info!("waiting for a client");
     // Every line carries the time since the receiver started serving, because
     // "the client takes ages to connect" is a question about elapsed time and a
     // log without timestamps cannot answer it.
