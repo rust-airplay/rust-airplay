@@ -15,16 +15,34 @@ cargo build
 cargo test
 ```
 
+`cargo test` 会跑单元测试、集成测试与 doctest。crate 没有 feature、没有可选依赖，所以只有一种构建配置。
+
 ## 门禁
 
-改动完成前必须通过：
+改动完成前必须全部通过。这些在本地运行；本仓库没有 CI 工作流，分支存在不等于改动完成。
 
 ```sh
 cargo fmt --all -- --check
 cargo test --all-targets
+cargo test --doc
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+cargo package --list
 ```
+
+最后一条不是构建：它列出发布出去的 crate 会包含什么，是发现新文档或新示例漏进 `Cargo.toml` 的 `include` 的最省事办法。
+
+## 默认忽略的测试
+
+有些测试需要这台机器未必有的东西：GStreamer 运行时、UxPlay 检出，或者几分钟的吞吐测量时间。它们都带 `#[ignore]` 和原因，`cargo test -- --ignored` 会运行它们，默认运行会说明跳过了多少。
+
+## 发布
+
+```sh
+cargo package --allow-dirty
+```
+
+打包但不发布，用来在发布前验证 `include` 列表与元数据。`cargo publish` 是发布步骤，在干净的 `main` 工作树上执行。
 
 ## 差分测试
 

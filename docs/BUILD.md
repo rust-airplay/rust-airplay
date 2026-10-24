@@ -20,16 +20,40 @@ cargo build
 cargo test
 ```
 
+`cargo test` runs the unit tests, the integration tests and the doctests. The crate has no
+features and no optional dependencies, so there is one build configuration.
+
 ## Gates
 
-A change is finished when these pass:
+A change is finished when all of these pass. They run locally; this repository has no CI
+workflow, and a change is not finished because a branch exists.
 
 ```sh
 cargo fmt --all -- --check
 cargo test --all-targets
+cargo test --doc
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+cargo package --list
 ```
+
+The last one is not a build: it lists what a published crate would contain, and it is the
+cheap way to notice that a new document or example is not in `include` in `Cargo.toml`.
+
+## Tests that are ignored by default
+
+Some tests take a machine that has something this one may not: a GStreamer runtime, a UxPlay
+checkout, or minutes of time for a throughput measurement. Each carries `#[ignore]` and a
+reason, so `cargo test -- --ignored` runs them and the default run says how many were skipped.
+
+## Publishing
+
+```sh
+cargo package --allow-dirty
+```
+
+packages the crate without publishing it, which verifies the `include` list and the metadata
+before a release. `cargo publish` is the release step and is done from a clean tree on `main`.
 
 ## The differential test
 
