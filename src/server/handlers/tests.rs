@@ -355,6 +355,35 @@ fn the_remote_control_identifiers_are_reported_once() {
 }
 
 #[test]
+fn a_body_with_several_parameters_reports_every_one() {
+    // The volume request used to be found only when it was the first line of the body, so
+    // a client that sent `progress` first had its volume change dropped.
+    let mut handlers = RouteHandlers::new(DeviceIdentity::default());
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = std::sync::Arc::clone(&seen);
+    handlers.set_parameter_callback(move |parameter| {
+        recorded.lock().expect("lock").push(parameter);
+    });
+
+    let body = b"progress: 1/2/3\r\nvolume: -15.000000\r\n".to_vec();
+    let (head, _) = parse(
+        "SET_PARAMETER /stream",
+        "CSeq: 1\r\nContent-Type: text/parameters\r\n",
+        &body,
+    );
+    let reply = handlers.set_parameter(&RouteRequest {
+        head: &head,
+        body: &body,
+        peer: None,
+    });
+    assert_eq!(reply.status, 200);
+    let seen = seen.lock().expect("lock");
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert!(matches!(seen[0], super::SetParameter::Progress { .. }));
+    assert!(matches!(seen[1], super::SetParameter::Volume(_)));
+}
+
+#[test]
 fn info_answers_only_the_requested_txt_record() {
     let mut identity = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Test", Vec::new());
     identity.txt_airplay = Some(b"txt".to_vec());

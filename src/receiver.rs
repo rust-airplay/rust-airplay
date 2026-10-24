@@ -580,7 +580,21 @@ fn describe_report(payload: &[u8]) -> String {
 /// plays at a linear gain. Keeping it in one function is what lets the conversion be tested
 /// without a sound card.
 fn client_gain(db: f32, curve: crate::VolumeCurve) -> f64 {
-    let fraction = crate::airplay_db_to_fraction(f64::from(db));
+    let value = f64::from(db);
+    // Decibels are `-30..0` and mute is `-144`, but a client that sends a **positive**
+    // number is not speaking decibels: 0 is full scale, so above it can only be a slider
+    // position, stated as a fraction (`0..1`) or a percentage (`0..100`). Treating those
+    // as decibels clamped every one of them to full volume, which is a volume slider that
+    // mutes at the bottom and does nothing anywhere else.
+    let fraction = if value > 0.0 {
+        if value <= 1.0 {
+            value
+        } else {
+            (value / 100.0).clamp(0.0, 1.0)
+        }
+    } else {
+        crate::airplay_db_to_fraction(value)
+    };
     curve.gain(fraction)
 }
 
@@ -1948,8 +1962,12 @@ mod tests {
         assert_eq!(client_gain(-144.0, flat), 0.0);
         // Half the slider is -15 dB, about 0.178 of the amplitude.
         assert!((client_gain(-15.0, flat) - 10f64.powf(-0.75)).abs() < 1e-12);
-        // A value above full is full, not silence.
-        assert!((client_gain(5.0, flat) - 1.0).abs() < 1e-12);
+        // A positive value is a slider position rather than decibels: a fraction is used
+        // as it stands, a percentage is divided by a hundred.
+        assert!((client_gain(0.5, flat) - flat.gain(0.5)).abs() < 1e-12);
+        assert!((client_gain(50.0, flat) - flat.gain(0.5)).abs() < 1e-12);
+        // And one out of range cannot become louder than full volume.
+        assert!((client_gain(1000.0, flat) - 1.0).abs() < 1e-12);
     }
 
     #[test]

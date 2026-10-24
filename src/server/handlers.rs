@@ -1035,57 +1035,75 @@ impl RouteHandlers {
         if media_type != "text/parameters" {
             return RouteReply::new(200, "OK");
         }
-        // Upstream only looks at the start of the body (`:1146`, `:1155`), so a
-        // request that carries both values changes the volume and nothing else.
-        let first_line = request
-            .body
-            .split(|byte| *byte == b'\n')
-            .next()
-            .unwrap_or_default();
-        let first_line = first_line.strip_suffix(b"\r").unwrap_or(first_line);
-        let Ok(line) = std::str::from_utf8(first_line) else {
-            return RouteReply::new(200, "OK");
-        };
-        let parameter = line
-            .strip_prefix("volume: ")
-            .and_then(|value| value.trim().parse::<f32>().ok())
-            // A value no media layer can use is ignored rather than passed on:
-            // upstream's `sscanf` would leave its variable at zero.
-            .filter(|volume| volume.is_finite())
-            .map(SetParameter::Volume)
-            .or_else(|| {
-                line.strip_prefix("progress: ").and_then(|value| {
-                    let mut parts = value.trim().split('/');
-                    let start = parts.next()?.parse().ok()?;
-                    let current = parts.next()?.parse().ok()?;
-                    let end = parts.next()?.parse().ok()?;
-                    parts.next().is_none().then_some(SetParameter::Progress {
-                        start,
-                        current,
-                        end,
-                    })
-                })
-            });
-        if let Some(SetParameter::Volume(level)) = parameter {
-            // The client's value is what the receiver plays at from here on, and what it
-            // answers with when asked; upstream does the same through its renderer.
-            // The scale is decibels: -30 is silence and 0 is full, and a value outside it
-            // is clamped the way upstream clamps it. `-144` is the client's mute signal and
-            // is kept as sent, because it is what `GET_PARAMETER` reports back.
-            let value = f64::from(level);
-            let db = if value == -144.0 {
-                -144.0
-            } else {
-                value.clamp(-30.0, 0.0)
+        // Every line is read, not just the first: upstream reads the start of the body
+        // (`:1146`, `:1155`), but a client that sends `progress` before `volume` would have
+        // its volume request dropped. The debug line carries the line that was understood,
+        // so a session that changes nothing can be traced to what actually arrived.
+        let mut understood = false;
+        for line in request.body.split(|byte| *byte == b'\n') {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            let Ok(line) = std::str::from_utf8(line) else {
+                continue;
             };
-            if let Ok(mut volume) = self.client_volume.lock() {
-                *volume = db;
+            let parsed = line
+                .strip_prefix("volume: ")
+                .and_then(|value| value.trim().parse::<f32>().ok())
+                // A value no media layer can use is ignored rather than passed on:
+                // upstream's `sscanf` would leave its variable at zero.
+                .filter(|volume| volume.is_finite())
+                .map(SetParameter::Volume)
+                .or_else(|| {
+                    line.strip_prefix("progress: ").and_then(|value| {
+                        let mut parts = value.trim().split('/');
+                        let start = parts.next()?.parse().ok()?;
+                        let current = parts.next()?.parse().ok()?;
+                        let end = parts.next()?.parse().ok()?;
+                        parts.next().is_none().then_some(SetParameter::Progress {
+                            start,
+                            current,
+                            end,
+                        })
+                    })
+                });
+            let Some(parsed) = parsed else {
+                continue;
+            };
+            log::debug!("set_parameter: {parsed:?} from {line:?}");
+            if let SetParameter::Volume(level) = &parsed {
+                // The client's value is what the receiver plays at from here on, and
+                // what it answers with when asked; upstream does the same through its
+                // renderer. The scale is decibels: -30 is silence and 0 is full, and a
+                // value outside it is clamped the way upstream clamps it. `-144` is the
+                // client's mute signal and is kept as sent, because it is what
+                // `GET_PARAMETER` reports back.
+                let value = f64::from(*level);
+                // A positive value is not decibels (0 is full scale), so it is a slider
+                // position and is kept as sent rather than clamped to full; `GET_PARAMETER`
+                // then answers the same number the client gave.
+                let db = if value > 0.0 {
+                    value.min(100.0)
+                } else if value == -144.0 {
+                    -144.0
+                } else {
+                    value.clamp(-30.0, 0.0)
+                };
+                if let Ok(mut volume) = self.client_volume.lock() {
+                    *volume = db;
+                }
+            }
+            understood = true;
+            if let Some(callback) = self.parameter.as_mut() {
+                callback(parsed);
             }
         }
-        if let Some(parameter) = parameter {
-            if let Some(callback) = self.parameter.as_mut() {
-                callback(parameter);
-            }
+        if !understood {
+            // A body this crate did not understand is exactly what a "the volume does
+            // nothing" session needs to show: it is read back here, bounded, and only at
+            // debug level.
+            log::debug!(
+                "set_parameter: nothing understood from {:?}",
+                String::from_utf8_lossy(&request.body[..request.body.len().min(80)])
+            );
         }
         RouteReply::new(200, "OK")
     }
