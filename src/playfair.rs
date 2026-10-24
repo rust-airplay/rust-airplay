@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 //! FairPlay PlayFair helper primitives.
 //!
-//! The implementation follows UxPlay's table and byte-order conventions while
+//! The implementation follows the table and byte-order conventions of FairPlay while
 //! keeping all memory access bounded and explicit in Rust.
 //!
-//! Translated from `upstream/UxPlay/lib/playfair/omg_hax.{c,h}`,
-//! `modified_md5.c`, `playfair.c` and `sap_hash.c`; those upstream files carry
+//! Translated from,
+//! `modified_md5.c`, `playfair.c` and `sap_hash.c`; those the protocol files carry
 //! no per-file header, so they keep the same LGPL-2.1-or-later notice as the
 //! FairPlay framing translation. See `THIRD_PARTY_NOTICES.md`.
 
@@ -86,7 +86,7 @@ const K: [u32; 64] = [
     0xeb86_d391,
 ];
 
-/// Computes UxPlay's modified MD5-like compression over one 64-byte block.
+/// Computes the modified MD5-like compression FairPlay uses over one 64-byte block.
 ///
 /// The block words are read as big-endian message words, while the 16-byte
 /// chaining key and output use native little-endian words as in the original
@@ -161,7 +161,7 @@ fn rol8(input: u8, count: u32) -> u8 {
 
 /// Computes the SAP hash used by FairPlay key derivation.
 ///
-/// The transform intentionally follows UxPlay's byte-level ordering and
+/// The transform intentionally follows the byte-level ordering FairPlay uses and
 /// in-place reverse scramble. All additions and XORs are performed on the
 /// 16-byte result after the garbling stage.
 pub(crate) fn sap_hash(block: &[u8; 64]) -> [u8; 16] {
@@ -366,7 +366,7 @@ fn message_iv(mode: usize) -> &'static [u8] {
 /// Decrypt the eight 16-byte PlayFair message blocks for one protocol mode.
 ///
 /// The input includes the 16-byte header followed by a 128-byte encrypted message body; byte 12 selects
-/// mode 0 through 3 as in UxPlay's `decryptMessage` implementation.
+/// mode 0 through 3, as `decryptMessage` does.
 pub(crate) fn decrypt_message(message: &[u8; 144]) -> Option<[u8; 128]> {
     let mode = usize::from(message[12]);
     if mode > 3 {

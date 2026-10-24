@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Multicast-DNS advertisement of the receiver.
 //!
-//! A receiver is reachable only if it announces itself: upstream registers two
+//! A receiver is reachable only if it announces itself: the protocol registers two
 //! records, `_raop._tcp` for the audio protocol and `_airplay._tcp` for the
-//! control protocol (`upstream/UxPlay@3dbf7cee:lib/dns_sd/dns_sd.c:240-360`),
+//! control protocol,
 //! and a client discovers it by browsing those types. This module builds the
 //! same records from a [`DeviceIdentity`] and registers them through `mdns-sd`.
 //!
-//! # Why the record contents are pinned to upstream
+//! # Why the record contents are pinned to the protocol
 //!
 //! The text record is the advertisement's contract: `features` decides which
 //! flows a client offers, `pk` is the key the client later authenticates the
@@ -28,7 +28,7 @@ const RAOP_SERVICE: &str = "_raop._tcp.local.";
 /// Service type of the control protocol record.
 const AIRPLAY_SERVICE: &str = "_airplay._tcp.local.";
 
-/// Records take these values from `upstream/UxPlay@3dbf7cee:lib/dnssdint.h:32-49`.
+/// Records take these values from.
 const RAOP_TXTVERS: &str = "1";
 const RAOP_CHANNELS: &str = "2";
 
@@ -50,8 +50,7 @@ const RAOP_SF_PASSWORD: &str = "0x84";
 /// What a client has to do before the receiver serves it.
 ///
 /// It is one choice rather than two flags, because the records have exactly one
-/// `pw`/`sf` pair: upstream picks it with the same switch
-/// (`upstream/UxPlay@3dbf7cee:lib/dns_sd/dns_sd.c:250-265`).
+/// `pw`/`sf` pair: the protocol picks it with the same switch
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protection {
     /// Clients connect without authenticating.
@@ -66,9 +65,9 @@ impl Protection {
     /// `pw` value of both records.
     ///
     /// A **password** and nothing else. A client reads these fields to decide whether it
-    /// needs a credential, and UxPlay 1.74 advertises `pw=false` on a receiver that asks
+    /// needs a credential, and AirPlay advertises `pw=false` on a receiver that asks
     /// clients to pair with a PIN — its own comment separates the two
-    /// (`upstream/UxPlay/lib/dnssd.c:45-47`: "1: use onscreen pin ... 2 or 3: require
+    /// (: "1: use onscreen pin ... 2 or 3: require
     /// password"). Pairing is a protocol step; a password is access control. Saying `true`
     /// here told clients that a receiver with no password had one.
     fn password_required(self) -> &'static str {
@@ -80,7 +79,7 @@ impl Protection {
 
     /// `sf` value of the audio record.
     ///
-    /// Read back from a running UxPlay 1.74 with `dns-sd`: `sf=0x4` on a receiver that does
+    /// Read back from a running receiver with `dns-sd`: `sf=0x4` on a receiver that does
     /// PIN pairing, and `0x84` only when a password is configured. The value this crate
     /// used to send for PIN pairing, `0x8c`, set both the "pin required" bit and the
     /// "password required" bit, which no receiver with a PIN alone advertises.
@@ -96,7 +95,6 @@ impl Protection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Advertisement {
     /// Instance name of the audio record: the hardware address, then the name
-    /// (`upstream/UxPlay@3dbf7cee:lib/dns_sd/dns_sd.c:276-289`).
     pub raop_name: String,
     /// Instance name of the control record: the receiver's name.
     pub airplay_name: String,
@@ -180,7 +178,7 @@ impl Advertisement {
     ///
     /// A receiver that answers `/info` with the same bytes it advertises cannot
     /// tell a client two different things, which is why [`DeviceIdentity`]
-    /// carries them (`upstream/UxPlay/lib/raop_handlers.h:96-100` answers the
+    /// carries them ( answers the
     /// record a client names in its query).
     pub fn txt_records(&self) -> (Vec<u8>, Vec<u8>) {
         (encode_txt(&self.airplay_txt), encode_txt(&self.raop_txt))
@@ -190,7 +188,7 @@ impl Advertisement {
 /// The `cn` record: the codings a client may choose from.
 ///
 /// Built from [`AudioCodec::ALL`] rather than written out, so the advertisement cannot
-/// drift from what this receiver decodes. Upstream lists `0,1,2,3` because it decodes all
+/// drift from what this receiver decodes. The protocol lists `0,1,2,3` because it decodes all
 /// four; this crate decodes two, and offering the other two would be a promise no part of
 /// the receiver keeps.
 fn codecs_string() -> String {
@@ -206,8 +204,8 @@ fn codecs_string() -> String {
 ///
 /// Entries are written in key order so the same advertisement always produces
 /// the same bytes, and an entry that cannot fit into one length byte is left out
-/// — upstream's `TXTRecordSetValue` refuses those the same way
-/// (`upstream/UxPlay@3dbf7cee:lib/dns_sd/dns_sd.c:241-274`), and every value this
+/// — the protocol's `TXTRecordSetValue` refuses those the same way
+///, and every value this
 /// module produces is far below the limit.
 fn encode_txt(properties: &HashMap<String, String>) -> Vec<u8> {
     let mut entries: Vec<String> = properties
@@ -232,7 +230,6 @@ fn encode_txt(properties: &HashMap<String, String>) -> Vec<u8> {
 const MAX_TXT_ENTRY: usize = 255;
 
 /// The `0x%X,0x%X` pair both records carry
-/// (`upstream/UxPlay@3dbf7cee:lib/dns_sd/dns_sd.c:238`).
 fn features_string(features: u64) -> String {
     let lower = features & 0xFFFF_FFFF;
     let upper = features >> 32;

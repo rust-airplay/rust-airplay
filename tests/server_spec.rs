@@ -805,7 +805,7 @@ async fn parameters_report_volume_and_progress_and_answer_451_without_a_content_
     }
     assert_eq!(seen.lock().expect("lock").len(), reported);
 
-    // A client that asks about the volume gets the value upstream falls back to
+    // A client that asks about the volume gets the value the protocol falls back to
     // when it has no media callback.
     client
         .write_all(&request_with_body(
@@ -881,7 +881,7 @@ async fn a_trace_reports_what_a_request_asked_and_what_it_got() {
     assert_eq!(seen[1].4, 4);
     assert_eq!(seen[1].5, 200);
     // A parameter request that does not say what it carries is refused with
-    // upstream's status, and the trace reports what the client got rather than
+    // the protocol's status, and the trace reports what the client got rather than
     // what was intended.
     assert_eq!(seen[2].0, "GET_PARAMETER");
     assert_eq!(seen[2].5, 451);
@@ -1312,7 +1312,7 @@ async fn answers_pair_pin_start_with_the_configured_pin() {
         header_value(head, "Audio-Jack-Status"),
         Some("connected; type=digital")
     );
-    // Upstream adds nothing to this reply, so it carries no content type.
+    // The protocol adds nothing to this reply, so it carries no content type.
     assert_eq!(header_value(head, "Content-Type"), None);
     assert_eq!(header_value(head, "Content-Length"), None);
     assert!(body.is_empty());
@@ -1366,7 +1366,7 @@ async fn pair_setup_answers_the_receiver_public_key() {
     let mut client = server.connect().await;
     let mut pending = Vec::new();
 
-    // Upstream ignores the content of the 32-byte body of the legacy setup.
+    // The protocol ignores the content of the 32-byte body of the legacy setup.
     client
         .write_all(&request_with_body("POST /pair-setup", "", &[0u8; 32]))
         .await
@@ -1448,7 +1448,7 @@ async fn pair_setup_pin_needs_a_verified_proof_before_the_third_step() {
     assert!(!public.is_empty() && public.len() <= 256);
 
     // Skip step 2 and seal a key with the all-zero session key of an SRP
-    // context whose proof was never verified. Upstream installs this key.
+    // context whose proof was never verified. The protocol installs this key.
     let session_key = [0u8; 40];
     let keys = rust_airplay::pairing::derive_pair_setup_keys(&session_key);
     let (decrypt_iv, _) = rust_airplay::pairing::pair_setup_gcm_nonces(&session_key);
@@ -1570,7 +1570,7 @@ async fn pair_verify_signs_the_exchange_and_closes_on_a_bad_signature() {
         .await
         .expect("response");
     let (head, body) = response_parts(&response);
-    // Upstream returns before it adds the content type, and closes.
+    // The protocol returns before it adds the content type, and closes.
     assert!(response.starts_with(b"RTSP/1.0 200 OK\r\n"));
     assert_eq!(header_value(head, "Content-Type"), None);
     assert_eq!(header_value(head, "Content-Length"), None);
@@ -1605,11 +1605,11 @@ async fn pair_verify_without_a_pin_falls_back_to_the_legacy_setup() {
 }
 
 #[tokio::test]
-async fn rejects_a_head_that_breaks_the_upstream_field_bounds() {
+async fn rejects_a_head_that_breaks_the_field_bounds() {
     let server = TestServer::start(local_config(), RouteHandlers::new(identity())).await;
     let mut client = server.connect().await;
-    // Twenty-one fields stay far below the 64 KiB head bound, but upstream
-    // answers them with 431 (`upstream/UxPlay@3dbf7cee:lib/raop.c:225-238`).
+    // Twenty-one fields stay far below the 64 KiB head bound, but the protocol
+    // answers them with 431.
     let mut request = String::from("GET /info RTSP/1.0\r\n");
     for index in 0..21 {
         request.push_str(&format!("X-{index}: v\r\n"));
@@ -1626,7 +1626,7 @@ async fn rejects_a_head_that_breaks_the_upstream_field_bounds() {
         text.starts_with("RTSP/1.0 431 Request Header Fields Too Large\r\n"),
         "{text}"
     );
-    // The rejection is bare, as it is upstream: it is written before the
+    // The rejection is bare, as it is the protocol: it is written before the
     // envelope headers.
     assert!(!text.contains("Server:"));
     let mut rest = Vec::new();

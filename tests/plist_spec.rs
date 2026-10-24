@@ -9,10 +9,10 @@
 //! (see `tools/plist_fixtures.py`), not by the `plist` crate that the port
 //! itself uses, so the decode direction is checked against an independent
 //! implementation of the binary plist format. The key names and value types
-//! mirror what upstream UxPlay reads and writes:
+//! mirror what an AirPlay client reads and writes:
 //!
-//! - SETUP request and response: `upstream/UxPlay/lib/raop_handlers.h:600-1067`
-//! - GET /info request and response: `upstream/UxPlay/lib/raop_handlers.h:37-206`
+//! - SETUP request and response:
+//! - GET /info request and response:
 //!
 //! The encode direction is cross-checked the other way round: this test dumps
 //! what [`Plist::encode_binary`] and [`Plist::encode_xml`] produced into
@@ -50,7 +50,7 @@ fn stream(plist: &Plist, index: usize) -> Dictionary {
 }
 
 #[test]
-fn setup_request_matches_the_upstream_contract() {
+fn setup_request_matches_the_contract() {
     let plist = fixture(SETUP_REQUEST);
 
     assert_eq!(plist.get_string("deviceID").unwrap(), "AA:BB:CC:DD:EE:FF");

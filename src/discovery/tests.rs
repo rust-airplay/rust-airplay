@@ -12,14 +12,14 @@ fn identity() -> DeviceIdentity {
 }
 
 #[test]
-fn audio_record_matches_the_upstream_fields() {
+fn audio_record_matches_the_expected_fields() {
     let advertisement = Advertisement::new(&identity(), 7000, Protection::Pin);
     assert_eq!(advertisement.port, 7000);
     assert_eq!(advertisement.raop_name, "AABBCCDDEEFF@Receiver");
     let txt = &advertisement.raop_txt;
-    // The expected values are what a running UxPlay 1.74 advertises, read back with
+    // The expected values are what a current AirPlay receiver advertises, read back with
     // `dns-sd`, with one deliberate difference: `cn` lists the codings this receiver can
-    // decode rather than the four upstream lists, because offering a coding no renderer
+    // decode rather than the four the protocol lists, because offering a coding no renderer
     // here takes produces noise at the client with no way for it to notice.
     for (key, value) in [
         ("txtvers", "1"),
@@ -47,12 +47,12 @@ fn audio_record_matches_the_upstream_fields() {
         txt.get("pk").map(String::as_str),
         Some(&"ab".repeat(32)[..])
     );
-    // The record carries nothing beyond the fields upstream sets.
+    // The record carries nothing beyond the fields the protocol sets.
     assert_eq!(txt.len(), 19);
 }
 
 #[test]
-fn control_record_matches_the_upstream_fields() {
+fn control_record_matches_the_expected_fields() {
     let advertisement = Advertisement::new(&identity(), 7000, Protection::Password);
     assert_eq!(advertisement.airplay_name, "Receiver");
     let txt = &advertisement.airplay_txt;
@@ -91,7 +91,7 @@ fn protection_selects_the_password_fields() {
         Some("0x84")
     );
     // A PIN is not a password. A receiver that asks a client to pair with a PIN advertises
-    // `pw=false` and `sf=0x4` — that is what UxPlay 1.74 does, read back from it with
+    // `pw=false` and `sf=0x4` — that is what a current receiver does, read back from it with
     // `dns-sd`. Saying otherwise sends a client down its credential path before connecting.
     let pin = Advertisement::new(&identity(), 7000, Protection::Pin);
     assert_eq!(pin.raop_txt.get("sf").map(String::as_str), Some("0x4"));

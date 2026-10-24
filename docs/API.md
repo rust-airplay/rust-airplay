@@ -21,7 +21,7 @@ connection gets its own handler set; the media session is shared between them, b
 client's audio key arrives in one `SETUP` and the mirror stream identifier in a later one,
 possibly on a different connection.
 
-`Ok(())` means the receiver was asked to stop. `Err` is a failure that prevented it from
+`Ok()` means the receiver was asked to stop. `Err` is a failure that prevented it from
 starting:
 
 - the control port cannot be bound,
@@ -68,8 +68,8 @@ path decision and prints nothing; the only files it opens are the ones a caller 
 | `dump_video` | `Option<PathBuf>` | when set, the first video frames are appended here as Annex-B |
 | `dump_audio` | `Option<PathBuf>` | when set, audio payloads are appended here behind a length |
 | `pace_video` | `bool` | hold mirror video to its capture spacing. Off by default; a mirror is judged by how quickly it follows the device |
-| `audio_latency` | `Duration` | the delay a client schedules against, in `Audio-Latency` on `RECORD`; upstream's `-al`, 0 to 10 seconds |
-| `initial_volume` | `Volume` | the linear gain a session starts at; upstream's `-vol` |
+| `audio_latency` | `Duration` | the delay a client schedules against, in `Audio-Latency` on `RECORD`; 250 ms by default, at most ten seconds |
+| `initial_volume` | `Volume` | the linear gain a session starts at; unity by default |
 | `volume_curve` | `VolumeCurve` | how a client's decibels become that gain: flat or tapered, with the `-30..0` range rescaled |
 | `log_streaming_reports` | `bool` | write the client's once-a-second streaming reports to the log |
 | `on_pin` | `Option<PinCallback>` | called with the one-time PIN as it is drawn, from a background thread |
@@ -79,7 +79,7 @@ path decision and prints nothing; the only files it opens are the ones a caller 
 | `features` | `Option<u64>` | advertised feature bitmap; `None` keeps `server::DEFAULT_FEATURES` |
 | `display` | `server::Display` | the size, refresh rate, frame cap and overscan a client reads from `/info` |
 | `client_policy` | `server::ClientPolicy` | which clients may start a session, checked in `SETUP`; a refused client is answered `403 Forbidden` |
-| `ports` | `media::ports::MediaPorts` | the four media ports; `0` lets the system choose, `MediaPorts::legacy()` is upstream's fixed layout |
+| `ports` | `media::ports::MediaPorts` | the four media ports; `0` lets the system choose, `MediaPorts::legacy` is the traditional fixed layout |
 | `nohold` | `bool` | a new client takes over from the current one instead of being refused |
 | `feedback_timeout` | `Option<Duration>` | close a session whose client stopped sending `/feedback` |
 

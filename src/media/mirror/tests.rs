@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
 
-/// A mirror packet with `payload` after the header upstream reads.
+/// A mirror packet with `payload` after the header the protocol reads.
 fn packet(first: u8, second: u8, option: u16, timestamp: u64, payload: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
     bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -24,7 +24,7 @@ fn units(units: &[&[u8]]) -> Vec<u8> {
     payload
 }
 
-/// A codec payload the way upstream reads one: two bytes, the source width and
+/// A codec payload the way the protocol reads one: two bytes, the source width and
 /// height as big-endian sixteen-bit values, then a sixteen-bit size and the
 /// sequence parameter set, then a sixteen-bit size and the picture parameter
 /// set (`raop_rtp_mirror.c:725-728`; the header around them is what
@@ -60,7 +60,7 @@ fn keeps_the_codec_configuration_for_the_next_video_packet() {
         .expect("codec data");
     assert!(config.is_pending());
 
-    // Upstream prepends the two units with start codes in front of them, and
+    // The protocol prepends the two units with start codes in front of them, and
     // only to a packet with the codec packet's own timestamp.
     let units = config.prepend_to(0x1122).expect("prepended");
     assert_eq!(
@@ -79,8 +79,8 @@ fn reads_the_codec_packet_a_device_actually_sent() {
     // this as the first mirror packet (captured 2026-10-06, `kind=CodecData`,
     // 37 bytes, option 0x1601). It is an AVCDecoderConfigurationRecord —
     // `01` version, `64` profile, `00` compatibility, `28` level, `ff` a length
-    // prefix of four, `e1` one SPS — and the sizes inside it are what upstream
-    // reads (`raop_rtp_mirror.c:725-728`).
+    // prefix of four, `e1` one SPS — and the sizes inside it are what the protocol
+    // reads.
     //
     // A device test vector is worth more than a built one here: the port's own
     // builder writes the same layout, so a test built from it would pass even if
@@ -146,7 +146,7 @@ fn refuses_a_stream_payload_beyond_what_a_frame_can_be() {
 #[test]
 fn drops_a_configuration_whose_timestamp_does_not_match() {
     // A video packet with another timestamp means the configuration belongs
-    // to a stream that is no longer arriving (raop_rtp_mirror.c:426-433), and
+    // to a stream that is no longer arriving, and
     // a decoder fed it would see parameter sets for the wrong picture.
     let mut config = CodecConfig::new();
     config
@@ -237,15 +237,15 @@ fn patterned(length: usize) -> Vec<u8> {
 }
 
 /// The client's side of the wire, written from the rule `mirror_buffer_decrypt`
-/// follows (`upstream/UxPlay@3dbf7cee:lib/mirror_buffer.c:94-124`) rather than from
+/// follows rather than from
 /// this crate: the counter restarts on the block after the blocks used so far, the
 /// bytes carried from the previous packet go in front, and a packet that does not
 /// end on a block boundary puts its tail, zero padded, into one whole block whose
 /// unused bytes it carries.
 ///
 /// A port and a client that both read the rule correctly agree on the keystream
-/// every byte sits at. The differential test in `tests/upstream_oracle.rs` checks
-/// the same port against upstream's own code; this is what checks whole packet
+/// every byte sits at. The differential test in `tests/the protocol_oracle.rs` checks
+/// the same port against the protocol's own code; this is what checks whole packet
 /// sequences, which the oracle's vectors are not.
 struct Encoder<'a> {
     stream: &'a [u8],
@@ -309,13 +309,17 @@ fn the_keystream_generator_matches_the_crates_own_cipher() {
     // the counter sits is the whole of the mirror rule. This says that generator
     // produces the same bytes as the CTR cipher the rest of the crate uses.
     let keys = stream_keys(11, &[0x44; STREAM_KEY_LEN]);
-    let reference = keystream(&keys, 4);
+    let expected = keystream(&keys, 4);
     let mut cipher = [0u8; 64];
     crate::crypto::Aes128CtrState::new(&keys.key, &keys.iv)
         .expect("state")
         .apply(&mut cipher);
     let decryptor = MirrorDecryptor::new(&keys).expect("decryptor");
-    assert_eq!(reference, cipher.to_vec(), "the reference over a buffer");
+    assert_eq!(
+        expected,
+        cipher.to_vec(),
+        "the expected output over a buffer"
+    );
     assert_eq!(
         decryptor.keystream(0, 4),
         cipher.to_vec(),
@@ -381,7 +385,7 @@ fn decrypts_what_a_client_encrypts_with_the_same_rule() {
     crate::crypto::Aes128CtrState::new(&keys.key, &keys.iv)
         .expect("state")
         .apply(&mut zeros);
-    assert_eq!(zeros, stream[..512], "the reference keystream");
+    assert_eq!(zeros, stream[..512], "the expected keystream");
 
     let mut encoder = Encoder::new(&stream);
     let mut decryptor = MirrorDecryptor::new(&keys).expect("decryptor");
@@ -432,7 +436,7 @@ fn decrypts_what_a_client_encrypts_with_the_same_rule() {
 
 #[test]
 fn carries_the_tail_block_into_the_next_packet() {
-    // Upstream's fixed vector, byte by byte: a 40-byte packet uses two whole
+    // The protocol's fixed vector, byte by byte: a 40-byte packet uses two whole
     // blocks and eight bytes of a third, and the other eight bytes of that third
     // block are what the next packet's head is XORed with
     // (`mirror_buffer.c:96-100`, `:111-123`). A rule stated without this check loses
@@ -631,9 +635,9 @@ fn a_session_drops_a_codec_configuration_that_no_longer_matches() {
 
 #[test]
 fn a_session_reports_a_frame_whose_units_do_not_hold_together() {
-    // The length prefix claims more than the payload has, which upstream treats
+    // The length prefix claims more than the payload has, which the protocol treats
     // as an invalid frame rather than as a broken connection
-    // (`raop_rtp_mirror.c:458-474`).
+    //.
     let keys = stream_keys(23, &[0x68; STREAM_KEY_LEN]);
     let mut session = MirrorSession::new(&keys).expect("session");
     let body = [0x00, 0x00, 0x00, 0x40, 0x65, 0x01];
@@ -708,9 +712,9 @@ fn a_session_reports_a_packet_that_is_off_its_stream() {
     );
     assert_eq!(session.frames(), 0);
 
-    // A packet shorter than the bytes being carried is not refused: upstream takes
+    // A packet shorter than the bytes being carried is not refused: the protocol takes
     // what it needs of them and loses the rest, because its carry buffer is one block
-    // that the next packet overwrites whole (`mirror_buffer.c:115-117`). The oracle's
+    // that the next packet overwrites whole. The oracle's
     // own readers do exactly that for a pair of one-byte packets, so this reproduces
     // it. What the session does report is the payload, which cannot be units.
     let mut carried = MirrorSession::new(&keys).expect("session");
@@ -773,8 +777,8 @@ fn refuses_a_length_that_does_not_fit() {
 
 #[test]
 fn refuses_a_unit_whose_forbidden_bit_is_set() {
-    // Upstream checks the bit before it looks at anything else in the unit
-    // (raop_rtp_mirror.c:470-474).
+    // The protocol checks the bit before it looks at anything else in the unit
+    //.
     let mut payload = units(&[&[0x85, 0x00]]);
     assert_eq!(
         into_annex_b(&mut payload),
@@ -783,7 +787,7 @@ fn refuses_a_unit_whose_forbidden_bit_is_set() {
 }
 
 #[test]
-fn reads_the_header_upstream_reads() {
+fn reads_the_header() {
     let bytes = packet(0x00, 0x10, 0x0000, 0x1122_3344_5566_7788, &[1, 2, 3, 4]);
     let (header, payload) = parse_packet(&bytes).expect("packet");
     assert_eq!(header.payload_size, 4);
@@ -795,7 +799,7 @@ fn reads_the_header_upstream_reads() {
 
 #[test]
 fn tells_encrypted_video_from_what_must_stay_clear() {
-    // The pairs upstream lists, and which of them a receiver decrypts.
+    // The pairs the protocol lists, and which of them a receiver decrypts.
     for (first, second, kind, encrypted) in [
         (0x00, 0x00, MirrorKind::Video { idr: false }, true),
         (0x00, 0x10, MirrorKind::Video { idr: true }, true),
@@ -848,7 +852,7 @@ fn refuses_what_it_cannot_read() {
 }
 
 #[test]
-fn parses_the_construction_upstream_writes_out() {
+fn parses_the_construction() {
     // The test rebuilds the hash itself, so a change to the prefixes, the
     // decimal formatting or the audio key's place in the hash fails here
     // rather than on a device.
@@ -872,7 +876,7 @@ fn parses_the_construction_upstream_writes_out() {
 #[test]
 fn the_identifier_is_hashed_as_text() {
     // 123 hashed as text is not 123 hashed as bytes; the test pins the form
-    // upstream uses so this cannot drift silently.
+    // the protocol uses so this cannot drift silently.
     let audio_key = [0x11; STREAM_KEY_LEN];
     let as_text = stream_keys(123, &audio_key);
     let mut as_bytes = [0u8; 8];

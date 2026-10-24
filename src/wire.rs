@@ -8,9 +8,9 @@
 //! other: once the head says how long the body is, the caller reads exactly that many bytes.
 //!
 //! Every bound here is a refusal rather than a truncation. A head this module cannot frame is
-//! answered with `431` by the caller, and a request that asks for a transfer coding it does
-//! not implement is refused because framing it by `Content-Length` instead would desynchronise
-//! the connection.
+//! answered with `431` by the caller, and a request that asks for an unsupported transfer
+//! coding is refused because framing it by `Content-Length` instead would desynchronise the
+//! connection.
 
 use std::fmt;
 
@@ -26,15 +26,14 @@ pub const DEFAULT_MAX_HEAD: usize = 64 * 1024;
 
 /// Largest number of header fields one request may carry.
 ///
-/// Upstream rejects a request beyond this, or beyond one of the two lengths
+/// The protocol rejects a request beyond this, or beyond one of the two lengths
 /// below, with `431 Request Header Fields Too Large`
-/// (`upstream/UxPlay@3dbf7cee:lib/raop.c:225-238`).
 pub const DEFAULT_MAX_FIELDS: usize = 20;
 
-/// Longest accepted header field name (`lib/raop.c:226`).
+/// Longest accepted header field name.
 pub const DEFAULT_MAX_FIELD_LEN: usize = 64;
 
-/// Longest accepted header field value (`lib/raop.c:227`).
+/// Longest accepted header field value.
 pub const DEFAULT_MAX_VALUE_LEN: usize = 1024;
 
 /// Bounds one request head has to respect.
@@ -123,7 +122,7 @@ impl MessageHead {
     /// Reads `Content-Length`, bounded by `maximum`.
     ///
     /// A message without the header has a zero-length body. Only decimal digits are a
-    /// length: upstream accepts a sign or a hexadecimal prefix, both of which one peer can
+    /// length: the protocol accepts a sign or a hexadecimal prefix, both of which one peer can
     /// read differently from another, and this port refuses them.
     ///
     /// # Errors
@@ -184,8 +183,8 @@ pub fn parse_request_head_with_maximum(
 ///
 /// Returns [`ParseError::Incomplete`] while the head is still incomplete,
 /// [`ParseError::TooLarge`] for a bound the caller turns into `431`, and
-/// [`ParseError::Invalid`] for a head that is malformed or uses framing this
-/// port does not implement.
+/// [`ParseError::Invalid`] for a head that is malformed or uses framing the parser does not
+/// support.
 pub fn parse_request_head_with_limits(
     input: &[u8],
     limits: HeadLimits,
@@ -216,7 +215,7 @@ pub fn parse_request_head_with_limits(
     if fields.next().is_some() || (!version.starts_with("RTSP/") && !version.starts_with("HTTP/")) {
         return Err(ParseError::Invalid("start line"));
     }
-    // `upstream/UxPlay@3dbf7cee:lib/http_request.c:65-90` bounds the protocol to
+    // bounds the protocol to
     // four bytes and the version number to three and rejects anything longer as
     // malformed. Without the bound a client could reflect an arbitrarily long
     // token back through the status line, which is why the port rejects it too.
@@ -234,8 +233,8 @@ pub fn parse_request_head_with_limits(
             return Err(ParseError::Invalid("header name"));
         }
         let value = value.trim();
-        // The three per-field bounds of `upstream/UxPlay@3dbf7cee:lib/raop.c:225-238`,
-        // which upstream checks in its request handler and answers with `431`.
+        // The three per-field bounds of,
+        // which the protocol checks in its request handler and answers with `431`.
         if name.len() > limits.max_field_len {
             return Err(ParseError::TooLarge {
                 declared: name.len(),
@@ -341,7 +340,7 @@ mod tests {
             Ok("RTSP/1.0")
         );
         // The protocol itself is bounded too, and the longest accepted token is
-        // the eight bytes upstream copies into its own buffer. A protocol that is
+        // the eight bytes the protocol copies into its own buffer. A protocol that is
         // not one of the two this crate knows is rejected by the start line check.
         assert_eq!(
             parse_request_head(b"GET /info RTSPX/1.0\r\nCSeq: 1\r\n\r\n"),

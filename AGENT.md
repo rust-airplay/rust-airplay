@@ -10,34 +10,27 @@ separate repositories, and nothing here may depend on them.
 
 ```
 src/                    the library
-tests/                  protocol, property and differential tests, with fixtures
-tools/oracle/           a C oracle built from UxPlay, for the differential tests
-tools/plist_fixtures.py
-docs/                   API, build guide, architecture; English and Chinese
-upstream/UxPlay/        the checkout the oracle builds from; not vendored
+tests/                  protocol, property and integration tests, with fixtures
+tools/                  helpers that generate test fixtures; not part of the crate
+docs/                   API, build guide, architecture, backend guide; English and Chinese
+examples/               a complete renderer implementation
 ```
 
 ## Gates
 
-A change is finished when these pass:
+A change is finished when all of these pass:
 
 ```sh
 cargo fmt --all -- --check
 cargo test --all-targets
+cargo test --doc
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+cargo package --list
 ```
 
-One suite needs more than a Rust toolchain and is not part of the list above:
-
-```sh
-pwsh -File tools/oracle/run.ps1
-```
-
-It compares this implementation with UxPlay's own C code, and needs `upstream/UxPlay` at the
-pinned commit and MSYS2. Run it for changes to the mirror keystream, the counter, audio
-decryption, the pairing vectors or the FairPlay transforms: it is the only test that can tell
-a plausible implementation from a correct one.
+`cargo package --list` is not a build: it shows what a published crate would contain, which is
+how a new document or example is caught missing from `include` in `Cargo.toml`.
 
 ## Rules
 
@@ -56,11 +49,11 @@ repository, so a change that wants a codec here is a change in the wrong crate.
 No blocking call in a receive loop. Rendering happens on threads fed by bounded queues,
 because a loop that blocks stops reading its socket, and the client stalls with it.
 
-Every public item is documented. `missing_docs` is a warning today; in review, treat it as an
-error.
+Every public item is documented, and `missing_docs` is denied. A public type or function
+without a doc comment does not compile.
 
-A comment explains why. The code says what it does, so a comment earns its place by recording
-a measurement, a rule taken from upstream, or a mistake that would otherwise be repeated.
+A comment explains why. The code says what it does, so a comment earns its place by recording a
+measurement, a rule the protocol imposes, or a mistake that would otherwise be repeated.
 
 ## Documentation
 
@@ -72,21 +65,9 @@ No emoji, in any document.
 Say what was run against a device and what was only tested. A claim that a platform works
 should say which device it was verified on.
 
-## Working from upstream
-
-`upstream/UxPlay` is a checkout at commit `517cbb1240d9b9f69330c55b957cdd52b4175b2a`. It is
-not vendored and must not be edited.
-
-When porting behaviour from it, read the source rather than the header defaults: a constant in
-a header is what a build starts from, and the program may change it before use. That
-distinction has cost more time in this project than any other, and the mDNS feature bitmap is
-the example to remember. Cite the file and line where behaviour is not obvious, and when a rule
-can be measured, commit the measurement as a test.
-
-## Tools
-
-`tools/oracle/` builds a C program from the upstream sources and prints their intermediate
-values. It is faster to ask it than to reason about the protocol when a rule is in doubt.
+The rustdoc is part of the documentation and is held to the same standard: an item describes
+its contract, its errors and, where the question is "how do I hold this", an example that
+compiles.
 
 ## Commits
 

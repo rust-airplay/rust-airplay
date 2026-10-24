@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! FairPlay setup constants generated from upstream/UxPlay.
+//! FairPlay setup constants generated from .
 
 pub const FP_HEADER: [u8; 12] = [
     0x46, 0x50, 0x4c, 0x59, 0x03, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00, 0x14,

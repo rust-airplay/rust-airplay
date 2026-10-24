@@ -3,14 +3,14 @@
 //!
 //! An AirPlay audio client sends its now-playing information as a DMAP listing: one outer
 //! item tagged `mlit` whose length covers the rest, then items of a four-character tag, a
-//! thirty-two-bit big-endian length and a value. Upstream reads the same structure and
-//! prints a text line per string tag (`uxplay.cpp:2150-2270`), and this module is that
+//! thirty-two-bit big-endian length and a value. The protocol reads the same structure and
+//! prints a text line per string tag, and this module is that
 //! reading: the tags it knows become labelled text, and a tag it does not know is not
 //! guessed at, because a length typed as a string would be printed as garbage.
 //!
 //! `-md` is a file of these lines, which is what a caller writes with [`text`].
 
-/// The labels upstream gives the string tags it knows (`uxplay.cpp:2166-2270`).
+/// The labels the protocol gives the string tags it knows.
 ///
 /// A tag outside this table is skipped rather than printed: DMAP items carry numbers and
 /// dates as well as strings, and their bytes are not text.
@@ -41,7 +41,7 @@ const LABELS: &[(&[u8; 4], &str)] = &[
 pub struct Item {
     /// The four-character tag, as sent.
     pub tag: String,
-    /// The label upstream gives it.
+    /// The label the protocol gives it.
     pub label: &'static str,
     /// The value, when it is text.
     pub value: String,
@@ -82,7 +82,7 @@ pub fn items(bytes: &[u8]) -> Vec<Item> {
     items
 }
 
-/// Reads a listing as the text upstream writes to a `-md` file.
+/// Reads a listing as the text the protocol writes to a `-md` file.
 #[must_use]
 pub fn text(bytes: &[u8]) -> String {
     items(bytes)

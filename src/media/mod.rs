@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The media streams a client sends after `SETUP`.
 //!
-//! Upstream splits this work in two: the protocol side receives datagrams, decrypts them and
+//! The protocol splits this work in two: the protocol side receives datagrams, decrypts them and
 //! puts them back in order (`lib/raop_rtp.c`, `lib/raop_rtp_mirror.c`,
 //! `lib/raop_buffer.c`), and the renderer side decodes and plays them (`renderers/`). This
 //! module is the first half: it belongs to the protocol core, depends on no media library, and

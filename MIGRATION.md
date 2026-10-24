@@ -10,16 +10,15 @@ crates live in repositories of their own, and a desktop client will follow them.
 
 ```
 src/                    the library
-tests/                  the protocol and differential tests, and their fixtures
-docs/                   API, build guide, architecture, in English and Chinese
-tools/oracle/           the C oracle the differential tests compare against
-tools/plist_fixtures.py
-upstream/               the UxPlay checkout the oracle builds from; not vendored
+tests/                  the protocol and integration tests, and their fixtures
+docs/                   API, build guide, architecture, backend guide, in English and Chinese
+examples/               a complete renderer implementation
+tools/                  helpers that generate test fixtures
 ```
 
 Everything a program needs to run a receiver is here: discovery, the control protocol,
 pairing, FairPlay, stream decryption, framing, the timing exchange, pacing, and the
-`Renderer` boundary. What is not here is decoding and playback.
+`Renderer` boundary. Decoding and playback live in the backend repository.
 
 ## What moved out
 
@@ -42,7 +41,7 @@ resolving dependencies - it is not a code problem.
 ## What changed in this crate
 
 - The package is the workspace root. There is no `[workspace]` table and no `crates/`
-  directory: `cargo build`, `cargo test` and the three gates run from the root.
+  directory: `cargo build`, `cargo test` and the gates run from the root.
 - `Cargo.lock` is no longer committed. A library that other crates depend on should not pin
   its dependencies for them.
 - Repository and package metadata point at `github.com/rust-airplay/rust-airplay`.
@@ -59,13 +58,8 @@ resolving dependencies - it is not a code problem.
 ```sh
 cargo fmt --all -- --check
 cargo test --all-targets
+cargo test --doc
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
-```
-
-The differential test against UxPlay is still here and still ignored by default; it needs
-`upstream/UxPlay` at the pinned commit and MSYS2:
-
-```sh
-pwsh -File tools/oracle/run.ps1
+cargo package --list
 ```

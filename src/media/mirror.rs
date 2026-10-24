@@ -4,11 +4,11 @@
 //! A mirroring client sets up a stream of its own with `SETUP`, and the two
 //! things that make it different from audio are that it travels over TCP and that
 //! its keystream is derived rather than carried. The derivation is written out in
-//! upstream (`upstream/UxPlay@3dbf7cee:lib/mirror_buffer.c`, `mirror_buffer_init_aes`):
+//! the protocol:
 //!
 //! ```text
 //! key = SHA-512("AirPlayStreamKey" + decimal(streamConnectionID) + audio key)
-//! iv  = SHA-512("AirPlayStreamIV"  + decimal(streamConnectionID) + audio key)
+//! iv = SHA-512("AirPlayStreamIV" + decimal(streamConnectionID) + audio key)
 //! ```
 //!
 //! both truncated to sixteen bytes, with the audio key being the one the
@@ -23,18 +23,18 @@
 //!
 //! # How the payload is encrypted
 //!
-//! The video payload is AES-128-CTR, but not as one continuous stream: upstream
+//! The video payload is AES-128-CTR, but not as one continuous stream: the protocol
 //! calls `aes_ctr_start_fresh_block` at the start of every packet
-//! (`upstream/UxPlay@3dbf7cee:lib/mirror_buffer.c:104`), and OpenSSL's CTR context
+//!, and OpenSSL's CTR context
 //! keeps a *block offset* rather than a byte position. Decrypting a length that is
 //! not a multiple of sixteen therefore leaves the context part-way into a block,
 //! and "start a fresh block" throws the rest of that block's keystream away. What
-//! upstream does with it instead is to decrypt the packet's tail as **one whole
+//! the protocol does with it instead is to decrypt the packet's tail as **one whole
 //! block** and keep the bytes the packet did not use
-//! (`mirror_buffer.c:111-123`), so the next packet's first bytes are XORed with
+//!, so the next packet's first bytes are XORed with
 //! them ([`MirrorDecryptor`] is that state).
 //!
-//! Upstream also sends the codec configuration (an H.264 SPS and PPS) in a packet
+//! The protocol also sends the codec configuration (an H.264 SPS and PPS) in a packet
 //! of its own, *unencrypted*, and prepends it to the next video packet because a
 //! decoder needs it before the first frame
 //! (`raop_rtp_mirror.c:420-450`, [`CodecConfig`]).
@@ -42,7 +42,7 @@
 use crate::crypto::sha512_concat;
 
 /// Length of the key and IV a mirror stream uses
-/// (`RAOP_AESKEY_LEN` in upstream).
+/// (`RAOP_AESKEY_LEN` in the protocol).
 pub const STREAM_KEY_LEN: usize = 16;
 
 /// Prefix of the material a mirror stream's key is hashed from.
@@ -52,16 +52,16 @@ const KEY_PREFIX: &str = "AirPlayStreamKey";
 const IV_PREFIX: &str = "AirPlayStreamIV";
 
 /// Length of the header every mirror packet starts with
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_rtp_mirror.c:298-302` reads exactly 128
+/// ( reads exactly 128
 /// bytes before it looks at anything else).
 pub const HEADER_LEN: usize = 128;
 
 /// Largest payload this crate reads.
 ///
 /// A bound exists so that a client cannot make a receiver allocate without limit,
-/// but it has to sit above what a real frame is. Upstream does not bound this at
+/// but it has to sit above what a real frame is. The protocol does not bound this at
 /// all: it `malloc`s exactly the size the header promised
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_rtp_mirror.c:365-368`), and the
+///, and the
 /// `RAOP_PACKET_LEN` of 32768 declared beside it (`:170`) is the buffer for
 /// reading the *header*, not a limit on the payload.
 ///
@@ -74,8 +74,8 @@ pub const MAX_PAYLOAD: usize = 4 * 1024 * 1024;
 
 /// What a mirror packet carries.
 ///
-/// Upstream identifies the kind by `packet[4]` and `packet[5]`
-/// (`raop_rtp_mirror.c:339-344`). The distinction matters because the video
+/// The protocol identifies the kind by `packet[4]` and `packet[5]`
+/// The distinction matters because the video
 /// packets are encrypted with the stream's derived keys and the rest are not:
 /// decrypting a keep-alive produces nonsense, and not decrypting video produces a
 /// black screen.
@@ -109,7 +109,7 @@ impl MirrorKind {
         matches!(self, Self::Video { .. })
     }
 
-    /// Reads the kind from the two bytes upstream reads it from.
+    /// Reads the kind from the two bytes the protocol reads it from.
     fn from_header(first: u8, second: u8) -> Self {
         match (first, second) {
             (0x00, 0x00) => Self::Video { idr: false },
@@ -125,7 +125,7 @@ impl MirrorKind {
 /// The picture geometry a codec packet announces.
 ///
 /// The codec packet is the only place a mirroring client states these, and it states them
-/// as floats that are whole numbers (`raop_rtp_mirror.c:555-575`): the source size at 16 and
+/// as floats that are whole numbers: the source size at 16 and
 /// 20, the offsets at 48 and 52, and the size the picture is drawn at at 56 and 60. A
 /// receiver that does not read them hands its backend `None` for a size the client already
 /// told it.
@@ -148,7 +148,7 @@ pub struct Geometry {
 impl Geometry {
     /// Reads the geometry from a codec packet, or `None` when it does not hold it.
     ///
-    /// A float that is not a whole number, or a zero size, is not geometry: upstream prints
+    /// A float that is not a whole number, or a zero size, is not geometry: the protocol prints
     /// the same values for a person to read and carries on, and a receiver that took a
     /// garbage size would open a pipeline it cannot use.
     #[must_use]
@@ -182,12 +182,12 @@ pub struct MirrorHeader {
     pub payload_size: u32,
     /// What the payload is.
     pub kind: MirrorKind,
-    /// The two bytes upstream keeps as the payload's option, from `packet[6..8]`.
+    /// The two bytes the protocol keeps as the payload's option, from `packet[6..8]`.
     pub option: u16,
     /// The client's timestamp, from `packet[8..16]`.
     ///
-    /// Upstream notes that a streaming report has none
-    /// (`raop_rtp_mirror.c:363`), so it is zero there and must not be read as a
+    /// The protocol notes that a streaming report has none
+    ///, so it is zero there and must not be read as a
     /// time.
     pub timestamp: u64,
     /// The picture geometry a codec packet announces, when it announces one.
@@ -296,17 +296,17 @@ pub fn parse_header(datagram: &[u8]) -> Result<MirrorHeader, MirrorError> {
     }
     let header = MirrorHeader {
         // The payload size and the timestamp are read in the host's byte order,
-        // which on every machine this runs on is little endian: upstream reads them
+        // which on every machine this runs on is little endian: the protocol reads them
         // through `byteutils_get_int(packet, 0)` and `byteutils_get_long(packet, 8)`,
         // and those are a plain `*((uint32_t *)(b + offset))` rather than the `_be`
-        // helpers beside them (`byteutils.c`). Reading them big endian turns a
+        // helpers beside them. Reading them big endian turns a
         // thirty-seven byte HEVC parameter-set packet into one that promises
         // 620756992 bytes, which is how a device's first mirror packet was refused.
         payload_size: u32::from_le_bytes(datagram[0..4].try_into().expect("four bytes")),
         kind: MirrorKind::from_header(datagram[4], datagram[5]),
         // The option is kept as the two bytes were written, because that is how
-        // upstream compares it: `packet[6] == 0x16`, `packet[6] == 0x56`
-        // (`raop_rtp_mirror.c:580-586`), not as a number.
+        // the protocol compares it: `packet[6] == 0x16`, `packet[6] == 0x56`
+        //, not as a number.
         option: u16::from_be_bytes(datagram[6..8].try_into().expect("two bytes")),
         timestamp: u64::from_le_bytes(datagram[8..16].try_into().expect("eight bytes")),
         geometry: matches!(
@@ -338,7 +338,7 @@ pub struct StreamKeys {
 /// Derives the keys of the mirror stream a client identified with
 /// `connection_id`, using the audio key of the session it belongs to.
 ///
-/// The decimal form of the identifier matters: upstream formats it with `%llu`,
+/// The decimal form of the identifier matters: the protocol formats it with `%llu`,
 /// so the hash covers text, not bytes. A port that hashed the number's bytes
 /// would produce a stream the client cannot read, with no error anywhere.
 pub fn stream_keys(connection_id: u64, audio_key: &[u8; STREAM_KEY_LEN]) -> StreamKeys {
@@ -357,7 +357,6 @@ pub fn stream_keys(connection_id: u64, audio_key: &[u8; STREAM_KEY_LEN]) -> Stre
 }
 
 /// The Annex-B start code that replaces a length prefix
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_rtp_mirror.c:453-454`, `nal_start_code`).
 pub const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
 
 /// Why a decrypted payload is not a sequence of NAL units.
@@ -403,12 +402,12 @@ impl std::error::Error for NalError {}
 /// codes, in place, and reports how many units it holds.
 ///
 /// The AirPlay mirror protocol prefixes every NAL unit with its length, which a
-/// decoder does not expect; upstream replaces each prefix with `00 00 00 01`
+/// decoder does not expect; the protocol replaces each prefix with `00 00 00 01`
 /// while it checks the unit
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_rtp_mirror.c:453-474`). Doing the same
+/// Doing the same
 /// here means a caller hands the payload to a decoder unchanged after this.
 ///
-/// The checks are upstream's, and they matter: a length read out of the payload
+/// The checks are the protocol's, and they matter: a length read out of the payload
 /// is only a length if the unit it claims fits in what is left, and a unit whose
 /// first byte has the forbidden bit set is not a unit at all. A payload that
 /// fails either check is reported instead of being passed on, because a decoder
@@ -441,7 +440,7 @@ pub fn into_annex_b(payload: &mut [u8]) -> Result<usize, NalError> {
         payload[offset..offset + 4].copy_from_slice(&START_CODE);
         offset += 4;
         units += 1;
-        // The first bit of an H.264 unit has to be zero. Upstream reads the byte
+        // The first bit of an H.264 unit has to be zero. The protocol reads the byte
         // even for a unit of length zero, so this does too.
         let first = payload.get(offset).copied().unwrap_or_default();
         if first & 0x80 != 0 {
@@ -453,32 +452,24 @@ pub fn into_annex_b(payload: &mut [u8]) -> Result<usize, NalError> {
 }
 /// The keystream of one mirror stream.
 ///
-/// This is upstream's `mirror_buffer` state: the key and IV, where in the stream the
-/// counter has come to, and the bytes of a partly used keystream block that the
-/// previous packet left behind. The rule it follows is written out in
-/// `mirror_buffer_decrypt` (`upstream/UxPlay@3dbf7cee:lib/mirror_buffer.c:94-124`) and
-/// is not what a plain CTR stream would do, so it is repeated here in the order the C
-/// code performs it:
+/// This is the state of the stream's cipher: the key and IV, where in the stream the counter has
+/// come to, and the bytes of a partly used keystream block that the previous packet left
+/// behind. The rule is not what a plain CTR stream would do, so it is written here in the order
+/// the cipher performs it:
 ///
-/// 1. the first `carry` bytes of the packet are XORed with the **end** of the previous
-///    packet's tail block, which that packet did not use
-///    (`output[i] = input[i] ^ og[16 - carry + i]`);
-/// 2. the counter is moved to a block boundary (`aes_ctr_start_fresh_block`, which is
-///    the block after the tail block), and the whole blocks after the carry —
-///    `((len - carry) / 16) * 16` bytes — are decrypted from there;
-/// 3. the remaining `rest = (len - carry) % 16` bytes are decrypted as one whole block
-///    (zero padded), of which the packet keeps the first `rest`; the other
-///    `16 - rest` keystream bytes are the carry for the next packet.
+/// 1. the first `carry` bytes of the packet are XORed with the **end** of the previous packet's
+///    tail block, which that packet did not use;
+/// 2. the counter is moved to a block boundary (the block after the tail block), and the whole
+///    blocks after the carry - `((len - carry) / 16) * 16` bytes - are decrypted from there;
+/// 3. the remaining `rest = (len - carry) % 16` bytes are decrypted as one whole block (zero
+///    padded), of which the packet keeps the first `rest`; the other `16 - rest` keystream
+///    bytes are the carry for the next packet.
 ///
-/// So a packet's first bytes are keystream the previous packet left behind, and its
-/// body is the stream's own blocks from the counter, which is what makes this
-/// different from one continuous keystream: two packets of the same length read the
-/// same blocks. The counter advances by the blocks a packet used, its tail's
-/// included, because the next packet starts one block past the carry's block.
-///
-/// The rule is pinned against upstream's own code in `tests/upstream_oracle.rs`,
-/// which reads where upstream's decryptor takes its keystream bytes from, packet by
-/// packet.
+/// So a packet's first bytes are keystream the previous packet left behind, and its body is the
+/// stream's own blocks from the counter, which is what makes this different from one continuous
+/// keystream: two packets of the same length read the same blocks. The counter advances by the
+/// blocks a packet used, its tail included, because the next packet starts one block past the
+/// carry's block.
 #[derive(Clone)]
 pub struct MirrorDecryptor {
     /// The key schedule, built once.
@@ -519,7 +510,7 @@ pub struct MirrorDecryptor {
     /// The bytes are read from here rather than from the front of the buffer, because the
     /// packet that left them used the front of the block itself.
     carry_at: usize,
-    /// How many of those bytes the next packet starts with, upstream's
+    /// How many of those bytes the next packet starts with, the protocol's
     /// `nextDecryptCount`.
     carried: usize,
 }
@@ -562,7 +553,7 @@ impl MirrorDecryptor {
 
     /// Starts a new stream, as a re-key does.
     ///
-    /// Upstream clears its carry buffer here (`mirror_buffer_init_aes`,
+    /// The protocol clears its carry buffer here (`mirror_buffer_init_aes`,
     /// `mirror_buffer.c:66-70`): a re-key means a new stream, and bytes held back
     /// from the previous one are the wrong keystream for the first packet of this
     /// one.
@@ -576,7 +567,7 @@ impl MirrorDecryptor {
     }
 
     /// How many keystream bytes the previous packet left for the next one,
-    /// upstream's `nextDecryptCount`.
+    /// the protocol's `nextDecryptCount`.
     pub fn carried(&self) -> usize {
         self.carried
     }
@@ -601,14 +592,14 @@ impl MirrorDecryptor {
 
     /// The keystream of `blocks` blocks starting at block `first` of the stream.
     ///
-    /// Upstream reaches this through OpenSSL's CTR context, whose counter block is
+    /// The protocol reaches this through OpenSSL's CTR context, whose counter block is
     /// incremented per block. Generating the blocks here keeps the position
     /// explicit: which block a packet starts on is the whole of the rule
-    /// (`mirror_buffer.c:94-124`), and it must not depend on any state a cipher
+    ///, and it must not depend on any state a cipher
     /// implementation keeps for itself.
     ///
     /// It is public because it is also the clearest way to check this crate against
-    /// upstream's own context, block for block, in the differential test.
+    /// the protocol's own context, block for block, in the differential test.
     #[must_use]
     pub fn keystream(&self, first: u64, blocks: usize) -> Vec<u8> {
         use aes::cipher::BlockEncrypt;
@@ -660,8 +651,8 @@ impl MirrorDecryptor {
         let length = input.len();
 
         // A packet shorter than the bytes being carried takes what it needs of them and
-        // loses the rest: upstream's carry buffer is one block that the next packet
-        // overwrites whole (`mirror_buffer.c:115-117`), so nothing of a carry outlives the
+        // loses the rest: the protocol's carry buffer is one block that the next packet
+        // overwrites whole, so nothing of a carry outlives the
         // packet after it, whatever the two lengths are. A client does not send that, and
         // the oracle's own readers show what it does when one arrives, so this reproduces
         // it rather than refusing — the lengths are what a receiver has to survive.
@@ -671,7 +662,7 @@ impl MirrorDecryptor {
         //
         // The cipher reads whole blocks. A packet whose length is not a multiple of the
         // block fills part of its last block, and the counter comes out of that block at
-        // its end (`mirror_buffer.c:115-117`) — so the bytes the packet did not use are
+        // its end — so the bytes the packet did not use are
         // still in the cipher, and are not anywhere in the stream to be read again: they
         // are the rest of a block that has already been read past. The next packet starts
         // with them, because `aes_ctr_start_fresh_block` cannot skip them — the counter is
@@ -683,7 +674,7 @@ impl MirrorDecryptor {
         // continue from where the previous packet's bytes stopped.
         // The carried bytes the packet actually takes: all of them when it is long enough,
         // and only as many as it has when it is not. Either way the carry does not survive
-        // this packet — upstream's buffer holds one block and the next packet fills it.
+        // this packet — the protocol's buffer holds one block and the next packet fills it.
         let carried = self.carried.min(length);
         for (at, byte) in input.iter().take(carried).enumerate() {
             output[at] = byte ^ self.carry[self.carry_at + at];
@@ -729,10 +720,10 @@ impl MirrorDecryptor {
 /// The codec configuration a mirroring client sends before it starts video.
 ///
 /// The packet is unencrypted and carries an H.264 sequence parameter set and a
-/// picture parameter set, which a decoder needs before the first frame. Upstream
+/// picture parameter set, which a decoder needs before the first frame. The protocol
 /// does not hand it on where it arrives: it keeps the two units with start codes
 /// in front of them and prepends them to the **next video packet**, which carries
-/// the same timestamp (`upstream/UxPlay@3dbf7cee:lib/raop_rtp_mirror.c:420-450`
+/// the same timestamp (
 /// and `:754-763`). This type is that rule, and a caller feeds it by calling
 /// [`CodecConfig::codec_data`] for a codec packet and
 /// [`CodecConfig::prepend_to`] for every video packet, in arrival order.
@@ -752,7 +743,6 @@ pub struct CodecConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Pending {
     /// Client timestamp of the codec packet, which the video packet has to share
-    /// (`raop_rtp_mirror.c:426`).
     timestamp: u64,
     /// `00 00 00 01` + SPS + `00 00 00 01` + PPS.
     units: Vec<u8>,
@@ -840,23 +830,23 @@ impl CodecConfig {
     pub fn codec_data(&mut self, timestamp: u64, payload: &[u8]) -> Result<(), CodecDataError> {
         // A mirroring client says which coding it is about to send in the four bytes after
         // the six-byte header: `avc1` for H.264 and `hvc1` for HEVC
-        // (`upstream/UxPlay/lib/raop_rtp_mirror.c:627-633`). A stream sends one or the
+        //. A stream sends one or the
         // other and does not change, so the first answer is the answer.
         if payload.get(4..8) == Some(b"hvc1") {
             return self.hevc_data(timestamp, payload);
         }
-        // The offsets are upstream's, and a device's own packet is what shows why they
+        // The offsets are the protocol's, and a device's own packet is what shows why they
         // are not the ones the format's description suggests. For an iPad's 1080p H.264
         // configuration:
         //
-        //   offset 6..8    the sequence set's size, big endian      00 12 = 18
-        //   offset 8..26   the sequence set itself                  (18 bytes)
-        //   offset 26      a byte between the two sets              01
-        //   offset 27..29  the picture set's size, big endian       00 04 = 4
-        //   offset 29..33  the picture set itself                   (4 bytes)
+        // offset 6..8 the sequence set's size, big endian 00 12 = 18
+        // offset 8..26 the sequence set itself (18 bytes)
+        // offset 26 a byte between the two sets 01
+        // offset 27..29 the picture set's size, big endian 00 04 = 4
+        // offset 29..33 the picture set itself (4 bytes)
         //
         // So the picture set's size sits at `sps_size + 9` and the set at
-        // `sps_size + 11` (`raop_rtp_mirror.c:725-728`), one byte later than the
+        // `sps_size + 11`, one byte later than the
         // AVCDecoderConfigurationRecord layout puts them. This crate had the format's
         // offsets: it read `0x9b86` as a size and refused the packet, which means a
         // configuration a real client sent was dropped by a reader that was right
@@ -883,7 +873,7 @@ impl CodecConfig {
             });
         };
         // A later codec packet replaces an earlier one that was never used, the
-        // way upstream frees the buffer it was holding (`:622-625`).
+        // way the protocol frees the buffer it was holding (`:622-625`).
         let mut units = Vec::with_capacity(sps.len() + pps.len() + 8);
         units.extend_from_slice(&START_CODE);
         units.extend_from_slice(sps);
@@ -895,7 +885,7 @@ impl CodecConfig {
 
     /// Reads an HEVC configuration packet, which carries three parameter sets.
     ///
-    /// The layout is upstream's (`upstream/UxPlay/lib/raop_rtp_mirror.c:643-693`) and it is
+    /// The layout is the protocol's and it is
     /// nothing like a `hvcC` box: at offset 0x75 the payload holds `a0 00 01` and a
     /// sixteen-bit size, then the video parameter set; `a1 00 01` and a size, then the
     /// sequence set; `a2 00 01` and a size, then the picture set. The decoder needs all
@@ -947,8 +937,8 @@ impl CodecConfig {
     ///
     /// A video packet with a different timestamp means the codec packet that is
     /// waiting belongs to a stream that is no longer arriving, so it is discarded
-    /// and `None` is returned (`raop_rtp_mirror.c:426-433`). Calling this for
-    /// every video packet in arrival order is what makes the rule upstream's:
+    /// and `None` is returned. Calling this for
+    /// every video packet in arrival order is what makes the rule the protocol's:
     /// whatever is prepended is prepended exactly once.
     #[must_use]
     pub fn prepend_to(&mut self, timestamp: u64) -> Option<Vec<u8>> {
@@ -980,7 +970,6 @@ pub struct VideoFrame {
     /// Units the frame holds, the prepended configuration included.
     pub units: usize,
     /// The client's timestamp, which is the wall-clock time the frame belongs to
-    /// (`raop_rtp_mirror.c:393-395`).
     pub timestamp: u64,
     /// Whether the frame starts with an IDR unit, which a decoder needs to start.
     pub idr: bool,
@@ -1009,8 +998,8 @@ impl std::error::Error for FrameError {}
 
 /// A mirroring client's stream: the packets it sends, turned into video frames.
 ///
-/// Upstream does all of this in one loop over the TCP stream
-/// (`raop_rtp_mirror.c:295-558`): it reads a header and a payload, decrypts the
+/// The protocol does all of this in one loop over the TCP stream
+/// it reads a header and a payload, decrypts the
 /// video kinds with [`MirrorDecryptor`], prepends a pending codec configuration,
 /// rewrites the length prefixes into start codes, and hands the result to a
 /// decoder. This type is that loop without the socket, so the part that can be
@@ -1084,8 +1073,8 @@ pub struct PacketCounts {
     pub unknown: u64,
     /// The first two bytes of the first unknown packet, for a report.
     pub last_unknown: Option<(u8, u8)>,
-    /// Payloads that were not the units they should be, which upstream passes on
-    /// marked rather than treating as fatal (`raop_rtp_mirror.c:533-536`).
+    /// Payloads that were not the units they should be, which the protocol passes on
+    /// marked rather than treating as fatal.
     pub not_units: u64,
 }
 
@@ -1281,7 +1270,7 @@ impl MirrorSession {
     /// Whether the client said it stopped sending video.
     ///
     /// A mirroring client that stops, or an app that covers the screen, sends a codec
-    /// packet whose option says so (`raop_rtp_mirror.c:580-586`); a receiver that ignores
+    /// packet whose option says so; a receiver that ignores
     /// it keeps a frozen picture on screen as if the stream were merely quiet.
     #[must_use]
     pub fn paused(&self) -> bool {
@@ -1348,7 +1337,7 @@ impl MirrorSession {
                 self.geometry = header.geometry.or(self.geometry);
                 // The option's first byte says whether the stream stopped or resumed:
                 // `0x56`/`0x5e` stop it, `0x16`/`0x1e` start it again
-                // (`raop_rtp_mirror.c:580-586`).
+                //.
                 match (header.option >> 8) as u8 {
                     0x56 | 0x5e => self.paused = true,
                     0x16 | 0x1e => self.paused = false,
@@ -1387,9 +1376,9 @@ impl MirrorSession {
                     Ok(units) => units,
                     Err(error) => {
                         self.dropped.saw_decrypted(record(false));
-                        // Upstream marks a frame whose units do not add up and passes
+                        // The protocol marks a frame whose units do not add up and passes
                         // it on rather than ending the stream (`:533-536`), so this is
-                        // counted and reported instead of being fatal.                        // The bytes and the reader's objection are what a report needs,
+                        // counted and reported instead of being fatal. // The bytes and the reader's objection are what a report needs,
                         // so they are captured where the failure is known.
                         self.dropped
                             .count(PacketKind::NotUnits(Box::new(PendingBadPacket {
@@ -1402,8 +1391,8 @@ impl MirrorSession {
                     }
                 };
                 if let Some(config) = self.codec.prepend_to(header.timestamp) {
-                    // Upstream counts the two units it prepends, so a caller can
-                    // report how many a frame holds (`raop_rtp_mirror.c:547-553`).
+                    // The protocol counts the two units it prepends, so a caller can
+                    // report how many a frame holds.
                     units += 2;
                     let mut whole = Vec::with_capacity(config.len() + data.len());
                     whole.extend_from_slice(&config);
@@ -1465,7 +1454,7 @@ mod pause_tests {
     fn codec_packet(option: u8) -> Vec<u8> {
         let mut packet = vec![0u8; HEADER_LEN];
         // A codec packet is the first byte pair 0x01, 0x00, and its option says whether
-        // the stream stopped or resumed (`raop_rtp_mirror.c:580-586`).
+        // the stream stopped or resumed.
         packet[4] = 0x01;
         packet[5] = 0x00;
         packet[6] = option;

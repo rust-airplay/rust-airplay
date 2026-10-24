@@ -18,7 +18,7 @@ pub async fn run(config: Config) -> Result<(), Error>
 客户端。每条控制连接有自己的处理器集合；媒体会话在连接之间共享，因为客户端的音频密钥在一个
 `SETUP` 里到达，镜像流标识在之后的另一个 `SETUP` 里，而且可能走另一条连接。
 
-`Ok(())` 表示接收端被要求停止。`Err` 是阻止启动的失败：
+`Ok()` 表示接收端被要求停止。`Err` 是阻止启动的失败：
 
 - 控制端口无法绑定；
 - mDNS 记录无法注册；
@@ -61,8 +61,8 @@ rust_airplay::run(config).await?;
 | `dump_video` | `Option<PathBuf>` | 设置后把最初的视频帧以 Annex-B 追加到这里 |
 | `dump_audio` | `Option<PathBuf>` | 设置后把音频负载（前面带长度）追加到这里 |
 | `pace_video` | `bool` | 按采集间隔压住镜像视频。默认关闭：投屏看的是画面跟手的快慢 |
-| `audio_latency` | `Duration` | 客户端排程所用的延迟，写在 `RECORD` 的 `Audio-Latency`；上游 `-al`，0 到 10 秒 |
-| `initial_volume` | `Volume` | 会话起始的线性增益；上游 `-vol` |
+| `audio_latency` | `Duration` | 客户端排程所用的延迟，写在 `RECORD` 的 `Audio-Latency`；默认 250 毫秒，最多 10 秒 |
+| `initial_volume` | `Volume` | 会话起始的线性增益；默认为 1.0 |
 | `volume_curve` | `VolumeCurve` | 客户端的 dB 如何变成该增益：平坦或锥形，`-30..0` 区间可重映射 |
 | `log_streaming_reports` | `bool` | 把客户端每秒一次的流报告写入日志 |
 | `on_pin` | `Option<PinCallback>` | 一次性 PIN 生成时由后台线程调用 |
@@ -72,7 +72,7 @@ rust_airplay::run(config).await?;
 | `features` | `Option<u64>` | 广播的 feature 位图；`None` 使用 `server::DEFAULT_FEATURES` |
 | `display` | `server::Display` | 客户端从 `/info` 读到的尺寸、刷新率、帧率上限与 overscan |
 | `client_policy` | `server::ClientPolicy` | 允许哪些客户端建立会话，在 `SETUP` 时判定；被拒客户端收到 `403 Forbidden` |
-| `ports` | `media::ports::MediaPorts` | 四个媒体端口；`0` 由系统分配，`MediaPorts::legacy()` 是上游固定布局 |
+| `ports` | `media::ports::MediaPorts` | 四个媒体端口；`0` 由系统分配，`MediaPorts::legacy` 是传统的固定布局 |
 | `nohold` | `bool` | 新客户端顶替当前连接，而不是被拒绝 |
 | `feedback_timeout` | `Option<Duration>` | 客户端停止发送 `/feedback` 后关闭会话 |
 

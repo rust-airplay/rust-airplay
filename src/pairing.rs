@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Apple-labelled key derivation and pairing transcript helpers.
 //!
-//! Each label in this module is a string upstream hashes with SHA-512 together
-//! with a shared secret (`upstream/UxPlay/lib/pairing.c:29-30`, `:600-614`), so
+//! Each label in this module is a string the protocol hashes with SHA-512 together
+//! with a shared secret, so
 //! the module maps one protocol step to one derivation instead of hiding them
 //! behind a generic key schedule.
 
@@ -29,7 +29,6 @@ pub struct PairVerifyKeys {
 }
 
 /// Key and IV of `/pair-verify`, derived from the X25519 shared secret
-/// (`upstream/UxPlay/lib/pairing.c:68-85`).
 pub fn derive_pair_verify_keys(shared_secret: &[u8; X25519_KEY_SIZE]) -> PairVerifyKeys {
     PairVerifyKeys {
         key: sha512_concat(&[b"Pair-Verify-AES-Key", shared_secret])[..16]
@@ -42,7 +41,6 @@ pub fn derive_pair_verify_keys(shared_secret: &[u8; X25519_KEY_SIZE]) -> PairVer
 }
 
 /// Key and IV of `/pair-setup-pin` step 3, derived from the SRP session key
-/// (`upstream/UxPlay/lib/pairing.c:600-614`).
 pub fn derive_pair_setup_keys(session_key: &[u8]) -> PairVerifyKeys {
     let key_hash = sha512_concat(&[b"Pair-Setup-AES-Key", session_key]);
     let iv_hash = sha512_concat(&[b"Pair-Setup-AES-IV", session_key]);
@@ -57,7 +55,7 @@ pub fn derive_pair_setup_keys(session_key: &[u8]) -> PairVerifyKeys {
 /// Both directions derive one base IV from the `Pair-Setup-AES-IV` label and the
 /// SRP session key. The client's key exchange key is decrypted with the base IV
 /// incremented by one and the reply is encrypted with it incremented by two
-/// (`upstream/UxPlay/lib/pairing.c:608-615` and `:635-637`, where the second
+/// ( and `:635-637`, where the second
 /// increment is the undocumented nonce adjustment). Neither nonce travels on the
 /// wire.
 pub fn pair_setup_gcm_nonces(session_key: &[u8]) -> ([u8; 16], [u8; 16]) {
@@ -70,7 +68,7 @@ pub fn pair_setup_gcm_nonces(session_key: &[u8]) -> ([u8; 16], [u8; 16]) {
 }
 
 /// Key and IV a stream of one audio session uses, derived from the session's
-/// audio key and connection identifier (`upstream/UxPlay/lib/raop_buffer.c`
+/// audio key and connection identifier (
 /// labels its stream material the same way).
 pub fn derive_stream_material(
     audio_key: &[u8; 16],
@@ -89,7 +87,7 @@ pub fn derive_stream_material(
 /// Signs the two key exchange keys of `/pair-verify` and encrypts the result.
 ///
 /// The server signs `our_ecdh_public || peer_ecdh_public` and uses the first 64
-/// bytes of the shared keystream (`upstream/UxPlay/lib/pairing.c:404-415`).
+/// bytes of the shared keystream.
 pub fn encrypt_pair_verify_signature(
     private_key: &[u8; 32],
     our_ecdh_public: &[u8; 32],
@@ -108,8 +106,8 @@ pub fn encrypt_pair_verify_signature(
 ///
 /// The server and the client share one AES-CTR keystream: the server's own
 /// signature used its first 64 bytes, so the client's signature is decrypted
-/// with the second 64 bytes. Upstream advances the stream with one throwaway
-/// round before decrypting (`upstream/UxPlay/lib/pairing.c:440-443`); skipping
+/// with the second 64 bytes. The protocol advances the stream with one throwaway
+/// round before decrypting; skipping
 /// that step would make every real client's signature fail to verify while a
 /// self-consistent encrypt/decrypt round trip still passes.
 pub fn decrypt_pair_verify_signature(
@@ -128,7 +126,7 @@ pub fn decrypt_pair_verify_signature(
 /// Verifies the signature a client sends in the second `/pair-verify` step.
 ///
 /// The client signs `peer_ecdh_public || our_ecdh_public`, the opposite order of
-/// the server's own signature (`upstream/UxPlay/lib/pairing.c:447-448`).
+/// the server's own signature.
 pub fn verify_pair_signature(
     signature: &[u8; PAIRING_SIG_SIZE],
     peer_ecdh_public: &[u8; 32],
@@ -141,8 +139,8 @@ pub fn verify_pair_signature(
 
 /// Fields of a `Digest` authorization header this crate has to check.
 ///
-/// Upstream extracts the same names by searching the header with `strstr` and
-/// writing a NUL into the copy it made (`upstream/UxPlay/lib/pairing.c`,
+/// The protocol extracts the same names by searching the header with `strstr` and
+/// writing a NUL into the copy it made (,
 /// `get_token`); this type is what a read-only parse produces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestAuthorization {
@@ -168,7 +166,6 @@ pub struct DigestAuthorization {
 ///
 /// Returns `None` when a field the digest needs is missing or malformed, so a
 /// caller answers `401` instead of computing a digest from missing pieces
-/// (upstream would pass a null pointer into its formatting).
 pub fn parse_digest_authorization(header: &str) -> Option<DigestAuthorization> {
     let (scheme, fields) = header.split_once(' ')?;
     if !scheme.eq_ignore_ascii_case("digest") {
@@ -238,7 +235,7 @@ pub fn md5_hex(input: &[u8]) -> String {
 }
 
 /// Digest response of a password-protected request
-/// (`upstream/UxPlay/lib/http_handlers.h`), including the `qop=auth` variant.
+///, including the `qop=auth` variant.
 #[allow(clippy::too_many_arguments)]
 pub fn digest_auth_response(
     method: &str,
@@ -360,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn pair_setup_gcm_nonces_match_the_upstream_directions() {
+    fn pair_setup_gcm_nonces_match_the_directions() {
         let session_key: [u8; 40] = bytes(
             "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021222324252627",
         );

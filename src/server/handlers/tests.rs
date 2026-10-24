@@ -56,7 +56,7 @@ fn info_answers_the_full_device_record() {
 
 #[test]
 fn the_offered_display_comes_from_the_identity() {
-    // Upstream's `-s wxh@r`, `-fps` and `-o`: a client reads these from `displays` and
+    // The protocol's `-s wxh@r`, `-fps` and `-o`: a client reads these from `displays` and
     // sends a mirror stream that matches, so a receiver that offers a smaller picture has
     // to say so here rather than drop frames afterwards.
     let mut identity = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Test", Vec::new());
@@ -104,7 +104,7 @@ fn the_offered_display_comes_from_the_identity() {
         Some(24)
     );
     assert_eq!(display.get("overscanned").unwrap().as_boolean(), Some(true));
-    // The refresh rate is sent as the interval, which is what upstream does.
+    // The refresh rate is sent as the interval, which is what the protocol does.
     let interval = display.get("refreshRate").unwrap().as_real();
     assert!(
         interval.is_some_and(|value| (value - 1.0 / 30.0).abs() < 1e-9),
@@ -113,7 +113,7 @@ fn the_offered_display_comes_from_the_identity() {
 }
 
 #[test]
-fn the_default_display_is_upstreams() {
+fn the_default_display() {
     let display = super::Display::default();
     assert_eq!(display.width, DEFAULT_WIDTH);
     assert_eq!(display.height, DEFAULT_HEIGHT);
@@ -124,7 +124,7 @@ fn the_default_display_is_upstreams() {
 
 #[test]
 fn the_advertised_features_are_the_identitys() {
-    // Bit 42 is what allows HEVC video, and it is the bit upstream's `-h265` sets. A
+    // Bit 42 is what allows HEVC video, and it is the bit the protocol's `-h265` sets. A
     // caller that turns it on has to see it in every place a client reads features.
     let mut identity = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Test", Vec::new());
     identity.features |= 1 << 42;
@@ -187,7 +187,7 @@ fn a_restrict_policy_admits_only_what_it_lists() {
 
 #[test]
 fn a_refused_client_gets_403_before_any_key_is_derived() {
-    // Upstream drops the connection when its callback refuses; a client deserves an answer
+    // The protocol drops the connection when its callback refuses; a client deserves an answer
     // that says so. The body here is a mirror-only SETUP, which needs no keys, so the
     // refusal is the only thing that can decide the reply.
     let mut handlers = RouteHandlers::new(DeviceIdentity::default());
@@ -223,8 +223,8 @@ Content-Type: application/x-apple-binary-plist
 
 #[test]
 fn a_volume_set_by_the_client_is_what_the_client_reads_back() {
-    // Upstream answers `GET_PARAMETER volume` with the value its renderer is playing at
-    // (`raop_handlers.h:1093-1097`); a constant zero is a receiver telling a client its
+    // The protocol answers `GET_PARAMETER volume` with the value its renderer is playing at
+    //; a constant zero is a receiver telling a client its
     // slider is where it is not.
     let mut handlers = RouteHandlers::new(DeviceIdentity::default());
     let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -275,7 +275,7 @@ fn a_volume_set_by_the_client_is_what_the_client_reads_back() {
 
 #[test]
 fn artwork_and_metadata_reach_their_callbacks() {
-    // Upstream's `-ca` and `-md`: a client sends the picture as `image/jpeg` and the
+    // The protocol's `-ca` and `-md`: a client sends the picture as `image/jpeg` and the
     // listing as `application/x-dmap-tagged`, both through `SET_PARAMETER`.
     let mut handlers = RouteHandlers::new(DeviceIdentity::default());
     let artwork = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -432,7 +432,7 @@ fn fairplay_setup_rejects_unknown_versions_and_lengths() {
         body: &body,
         peer: None,
     });
-    // Version byte 4 is 0, which is not the FairPlay version upstream accepts.
+    // Version byte 4 is 0, which is not the FairPlay version the protocol accepts.
     assert_eq!(rejected.status, 501);
 
     let (head, body) = parse("POST /fp-setup", "CSeq: 1\r\n", &[0; 5]);
@@ -449,7 +449,7 @@ fn fairplay_setup_rejects_unknown_versions_and_lengths() {
 fn reads_the_mirror_identifier_a_device_actually_sent() {
     // A real session sent this, and refusing it cost the whole video stream:
     // `streamConnectionID` as a *signed* 64-bit number, negative because its high bit
-    // is set. Upstream prints it with `%llu` (`raop_handlers.h:963`), so those same
+    // is set. The protocol prints it with `%llu`, so those same
     // bits are the identifier, and the keys are derived from their decimal form.
     let mut stream = plist::Dictionary::new();
     stream.insert("type".to_owned(), 110u64.into());

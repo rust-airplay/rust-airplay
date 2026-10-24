@@ -1,34 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Upstream control-plane specification.
+//! The control-plane specification.
 //!
-//! These tables pin the observable control-plane contract to
-//! `upstream/UxPlay@517cbb1240d9b9f69330c55b957cdd52b4175b2a`:
-//!
-//! - route selection: `upstream/UxPlay/lib/raop.c:406-478`, plus the HLS rule at
-//!   `upstream/UxPlay/lib/raop.c:270` and the BLE beacon rule at
-//!   `upstream/UxPlay/lib/raop.c:257-260`;
-//! - requests that get no response at all: `upstream/UxPlay/lib/raop.c:247-250`
-//!   (unusable `CSeq`) and `upstream/UxPlay/lib/raop.c:263-266` (no `CSeq`);
-//! - `Public` header: `upstream/UxPlay/lib/raop_handlers.h:596`;
-//! - response headers: `upstream/UxPlay/lib/raop.c:338-340`,
-//!   `upstream/UxPlay/lib/raop.c:488-492`,
-//!   `upstream/UxPlay/lib/raop_handlers.h:1225-1226` (`Audio-Latency` and the
-//!   analog jack status), `upstream/UxPlay/lib/raop_handlers.h:1284`
-//!   (`Connection: close`);
-//! - response framing and protocol echo: `upstream/UxPlay/lib/http_response.c:71-91`
-//!   and `:131-170`;
-//! - session binding: `upstream/UxPlay/lib/raop.c:268-270` and `:400-402`;
-//! - status codes: `upstream/UxPlay/lib/raop.c:335` (default `200`),
-//!   `upstream/UxPlay/lib/raop.c:237` (`431`), `upstream/UxPlay/lib/raop.c:442-444`
-//!   and `upstream/UxPlay/lib/raop_handlers.h:558` (`501`),
-//!   `upstream/UxPlay/lib/http_handlers.h:657` and `:891` (`400`),
-//!   `upstream/UxPlay/lib/http_handlers.h:910`, `:926` and `:974` (`404`).
-//!
-//! The port deliberately differs from upstream where upstream has no handler:
-//! the ported routes' plist and media work (W5), the `400` status for a request
-//! whose head it cannot parse, and the `501` for a route upstream serves but the
-//! port has not ported. Those differences are asserted below rather than being
-//! described as gaps.
+//! The tables below pin the observable control-plane contract: route selection and the HLS and
+//! BLE-beacon rules; requests that get no response; the `Public` header; response headers
+//! (`Audio-Latency`, the analog jack status, `Connection: close`); framing and protocol echo;
+//! session binding; and the status codes (`200`, `400`, `404`, `431`, `501`).
 
 use rust_airplay::control::{
     AUDIO_JACK_STATUS, AUDIO_JACK_STATUS_RECORD, ControlError, ControlOutcome, ControlResponse,
@@ -84,143 +60,128 @@ fn assert_header(response: &ControlResponse, name: &str, value: &str) {
 }
 
 #[test]
-fn route_table_matches_upstream() {
-    use Dispatch::{NotImplemented, Ported, Unhandled, UnknownRtspMethod};
+fn route_table_matches() {
+    use Dispatch::{Delegated, Local, Unhandled, UnknownRtspMethod};
     let cases: &[(&str, &str, &str, Dispatch)] = &[
-        // RTSP/1.0 `POST` handlers (raop.c:407-422).
-        (
-            "POST",
-            "/feedback",
-            "RTSP/1.0",
-            NotImplemented(Route::Feedback),
-        ),
+        // RTSP/1.0 `POST` handlers.
+        ("POST", "/feedback", "RTSP/1.0", Delegated(Route::Feedback)),
         (
             "POST",
             "/pair-pin-start",
             "RTSP/1.0",
-            NotImplemented(Route::PairPinStart),
+            Delegated(Route::PairPinStart),
         ),
         (
             "POST",
             "/pair-setup-pin",
             "RTSP/1.0",
-            NotImplemented(Route::PairSetupPin),
+            Delegated(Route::PairSetupPin),
         ),
         (
             "POST",
             "/pair-setup",
             "RTSP/1.0",
-            NotImplemented(Route::PairSetup),
+            Delegated(Route::PairSetup),
         ),
         (
             "POST",
             "/pair-verify",
             "RTSP/1.0",
-            NotImplemented(Route::PairVerify),
+            Delegated(Route::PairVerify),
         ),
         (
             "POST",
             "/fp-setup",
             "RTSP/1.0",
-            NotImplemented(Route::FairPlaySetup),
+            Delegated(Route::FairPlaySetup),
         ),
         (
             "POST",
             "/audioMode",
             "RTSP/1.0",
-            NotImplemented(Route::AudioMode),
+            Delegated(Route::AudioMode),
         ),
-        // RTSP/1.0 `GET`: upstream matches the URL with `strstr` (raop.c:424).
-        ("GET", "/info", "RTSP/1.0", NotImplemented(Route::Info)),
-        ("GET", "/info?x=1", "RTSP/1.0", NotImplemented(Route::Info)),
+        // RTSP/1.0 `GET`: the protocol matches the URL with `strstr`.
+        ("GET", "/info", "RTSP/1.0", Delegated(Route::Info)),
+        ("GET", "/info?x=1", "RTSP/1.0", Delegated(Route::Info)),
         ("GET", "/other", "RTSP/1.0", Unhandled),
-        // RTSP/1.0 method-only handlers (raop.c:427-441). SETUP carries the
+        // RTSP/1.0 method-only handlers. SETUP carries the
         // session's key material, so the control layer hands it to a handler.
-        ("OPTIONS", "*", "RTSP/1.0", Ported(Route::Options)),
+        ("OPTIONS", "*", "RTSP/1.0", Local(Route::Options)),
         (
             "SETUP",
             "rtsp://host/stream",
             "RTSP/1.0",
-            NotImplemented(Route::Setup),
+            Delegated(Route::Setup),
         ),
         (
             "GET_PARAMETER",
             "/stream",
             "RTSP/1.0",
-            NotImplemented(Route::GetParameter),
+            Delegated(Route::GetParameter),
         ),
         (
             "SET_PARAMETER",
             "/stream",
             "RTSP/1.0",
-            NotImplemented(Route::SetParameter),
+            Delegated(Route::SetParameter),
         ),
-        ("RECORD", "/stream", "RTSP/1.0", Ported(Route::Record)),
-        ("FLUSH", "/stream", "RTSP/1.0", Ported(Route::Flush)),
-        ("TEARDOWN", "/stream", "RTSP/1.0", Ported(Route::Teardown)),
-        // Documented extension: upstream has no ANNOUNCE route at all.
-        ("ANNOUNCE", "/stream", "RTSP/1.0", Ported(Route::Announce)),
+        ("RECORD", "/stream", "RTSP/1.0", Local(Route::Record)),
+        ("FLUSH", "/stream", "RTSP/1.0", Local(Route::Flush)),
+        ("TEARDOWN", "/stream", "RTSP/1.0", Local(Route::Teardown)),
+        // Documented extension: the protocol has no ANNOUNCE route at all.
+        ("ANNOUNCE", "/stream", "RTSP/1.0", Local(Route::Announce)),
         // Unknown RTSP method: raop.c:442-444 answers 501.
         ("PAUSE", "/stream", "RTSP/1.0", UnknownRtspMethod),
-        // HTTP/1.1 POST handlers (raop.c:446-463).
-        (
-            "POST",
-            "/reverse",
-            "HTTP/1.1",
-            NotImplemented(Route::Reverse),
-        ),
-        ("POST", "/play", "HTTP/1.1", NotImplemented(Route::Play)),
+        // HTTP/1.1 POST handlers.
+        ("POST", "/reverse", "HTTP/1.1", Delegated(Route::Reverse)),
+        ("POST", "/play", "HTTP/1.1", Delegated(Route::Play)),
         (
             "POST",
             "/getProperty?key=x",
             "HTTP/1.1",
-            NotImplemented(Route::GetProperty),
+            Delegated(Route::GetProperty),
         ),
         (
             "POST",
             "/scrub?position=1",
             "HTTP/1.1",
-            NotImplemented(Route::Scrub),
+            Delegated(Route::Scrub),
         ),
-        (
-            "POST",
-            "/rate?value=1",
-            "HTTP/1.1",
-            NotImplemented(Route::Rate),
-        ),
-        ("POST", "/stop", "HTTP/1.1", NotImplemented(Route::Stop)),
-        ("POST", "/action", "HTTP/1.1", NotImplemented(Route::Action)),
+        ("POST", "/rate?value=1", "HTTP/1.1", Delegated(Route::Rate)),
+        ("POST", "/stop", "HTTP/1.1", Delegated(Route::Stop)),
+        ("POST", "/action", "HTTP/1.1", Delegated(Route::Action)),
         (
             "POST",
             "/fp-setup2",
             "HTTP/1.1",
-            NotImplemented(Route::FairPlaySetup2),
+            Delegated(Route::FairPlaySetup2),
         ),
-        // HTTP/1.1 GET and PUT handlers (raop.c:464-475).
+        // HTTP/1.1 GET and PUT handlers.
         (
             "GET",
             "/server-info",
             "HTTP/1.1",
-            NotImplemented(Route::ServerInfo),
+            Delegated(Route::ServerInfo),
         ),
         (
             "GET",
             "/playback-info",
             "HTTP/1.1",
-            NotImplemented(Route::PlaybackInfo),
+            Delegated(Route::PlaybackInfo),
         ),
         (
             "PUT",
             "/setProperty?x=1",
             "HTTP/1.1",
-            NotImplemented(Route::SetProperty),
+            Delegated(Route::SetProperty),
         ),
-        // No handler selected: upstream keeps its default 200 (raop.c:334-335).
+        // No handler selected: the protocol keeps its default 200.
         ("POST", "/unknown", "HTTP/1.1", Unhandled),
         ("PATCH", "/reverse", "HTTP/1.1", Unhandled),
         // The HTTP/1.1 table has no `/info` route.
         ("GET", "/info", "HTTP/1.1", Unhandled),
-        // Upstream compares the protocol string exactly (raop.c:406, 445).
+        // The protocol compares the protocol string exactly (raop.c:406, 445).
         ("POST", "/feedback", "RTSP/2.0", Unhandled),
     ];
     for (method, target, version, expected) in cases {
@@ -242,7 +203,7 @@ fn hls_rule_precedes_both_protocol_tables() {
         has_host: true,
         has_session_id: false,
     };
-    assert_eq!(dispatch(&hls), Dispatch::NotImplemented(Route::Hls));
+    assert_eq!(dispatch(&hls), Dispatch::Delegated(Route::Hls));
 
     // CSeq or an Apple session id keeps the request on the normal tables.
     let with_cseq = RequestFacts {
@@ -268,12 +229,12 @@ fn request_facts_come_from_the_parsed_head() {
     assert!(!facts.has_host);
     assert!(!facts.is_hls_request());
     assert!(!facts.is_ble_beacon_response());
-    assert_eq!(dispatch(&facts), Dispatch::NotImplemented(Route::Info));
+    assert_eq!(dispatch(&facts), Dispatch::Delegated(Route::Info));
 
     let hls = parse_request_head(b"GET /x HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").unwrap();
     let facts = RequestFacts::from_head(&hls);
     assert!(facts.is_hls_request());
-    assert_eq!(dispatch(&facts), Dispatch::NotImplemented(Route::Hls));
+    assert_eq!(dispatch(&facts), Dispatch::Delegated(Route::Hls));
 
     // raop.c:257-260: only a CSeq-less RTSP/1.0 request that mentions
     // txtAirPlay/txtRAOP is a BLE beacon response.
@@ -288,12 +249,12 @@ fn announce_is_an_unadvertised_extension() {
     assert!(!PUBLIC_METHODS.contains("ANNOUNCE"));
     assert_eq!(
         dispatch(&facts("ANNOUNCE", "/stream", "RTSP/1.0")),
-        Dispatch::Ported(Route::Announce)
+        Dispatch::Local(Route::Announce)
     );
 }
 
 #[test]
-fn options_response_pins_public_and_upstream_headers() {
+fn options_response_pins_public_headers() {
     let mut session = ControlSession::new();
     let response = respond(&mut session, &request("OPTIONS", "*", "RTSP/1.0", 7, ""));
     assert_eq!(response.status, 200);
@@ -302,14 +263,14 @@ fn options_response_pins_public_and_upstream_headers() {
     assert_header(&response, "Audio-Jack-Status", AUDIO_JACK_STATUS);
     assert_header(&response, "Public", PUBLIC_METHODS);
     assert_eq!(response.protocol, "RTSP/1.0");
-    // upstream never sends or reads a `Session` header.
+    // the protocol never sends or reads a `Session` header.
     assert_eq!(response.header("Session"), None);
 }
 
 #[test]
 fn record_response_uses_the_analog_jack_status_and_reports_latency() {
     let mut session = ControlSession::new();
-    // No ANNOUNCE: upstream has no route for it, so SETUP may follow on a fresh
+    // No ANNOUNCE: the protocol has no route for it, so SETUP may follow on a fresh
     // connection. This session has no handler, and the server tests cover the
     // route itself.
     respond(
@@ -338,8 +299,8 @@ fn record_response_uses_the_analog_jack_status_and_reports_latency() {
 #[test]
 fn options_and_setup_are_never_rejected_by_state() {
     let mut session = ControlSession::new();
-    // SETUP first, then OPTIONS, then a second SETUP: upstream's routing layer
-    // has no state gate (raop.c:406-478).
+    // SETUP first, then OPTIONS, then a second SETUP: the protocol's routing layer
+    // has no state gate.
     for (method, target, cseq) in [
         ("SETUP", "/stream", 1),
         ("OPTIONS", "*", 2),
@@ -518,7 +479,7 @@ fn only_bodies_and_content_type_get_a_content_length() {
 }
 
 #[test]
-fn rejections_use_bare_upstream_status_codes() {
+fn rejections_use_bare_status_codes() {
     let mut session = ControlSession::new();
     let oversized_header = format!(
         "SETUP /stream RTSP/1.0\r\nCSeq: 1\r\nX: {}\r\n\r\n",

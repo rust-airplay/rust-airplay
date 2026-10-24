@@ -2,23 +2,23 @@
 //! The timing port of a session.
 //!
 //! A client and a receiver agree on how their clocks relate by exchanging timing
-//! packets on their own port, which `SETUP` negotiates. Upstream sends a
+//! packets on their own port, which `SETUP` negotiates. The protocol sends a
 //! thirty-two byte request and reads three values out of the answer
-//! (`upstream/UxPlay@3dbf7cee:lib/raop_ntp.c:578-700`):
+//!
 //!
 //! ```text
-//! request[0]      0x80
-//! request[1]      0xd2, whose type is 0x52
-//! request[2..3]   0x00 0x07
+//! request[0] 0x80
+//! request[1] 0xd2, whose type is 0x52
+//! request[2..3] 0x00 0x07
 //! request[24..31] the local time when the request went out
 //! ```
 //!
 //! and out of the response it reads
 //!
 //! ```text
-//! response[8..11]   t1, 32 bits, big endian
-//! response[16..19]  t2, 32 bits, the client's receive time
-//! response[24..27]  t3, 32 bits, the client's transmit time
+//! response[8..11] t1, 32 bits, big endian
+//! response[16..19] t2, 32 bits, the client's receive time
+//! response[24..27] t3, 32 bits, the client's transmit time
 //! ```
 //!
 //! This module is both halves of that exchange. [`build_request`] and [`parse_response`] are
@@ -27,30 +27,28 @@
 //! that echo no request or repeat one.
 //!
 //! The arithmetic is integer nanoseconds because the wire values are whole seconds: `t1`,
-//! `t2` and `t3` are 32-bit seconds and upstream truncates the arrival time to the same
-//! width (`raop_ntp.c:656-697`). A fraction mixed into that arithmetic makes the offset
+//! `t2` and `t3` are 32-bit seconds and the protocol truncates the arrival time to the same
+//! width. A fraction mixed into that arithmetic makes the offset
 //! wrong by half a round trip. What the exchange establishes is an epoch, not a fine
 //! schedule: media is paced from the arrival of its first frame, and the epoch is what lets
 //! a client timestamp be read as a local one.
 
 use crate::ntp;
 
-/// Length of a timing request, which upstream sends in full
-/// (`raop_ntp.c:580-581`).
+/// Length of a timing request, which the protocol sends in full
 pub const TIMING_REQUEST_LEN: usize = 32;
 
-/// The first two bytes of a request (`raop_ntp.c:580`).
+/// The first two bytes of a request.
 const REQUEST_HEADER: [u8; 4] = [0x80, 0xd2, 0x00, 0x07];
 
-/// Where a request carries the time it was sent (`raop_ntp.c:616`).
+/// Where a request carries the time it was sent.
 const REQUEST_TRANSMIT_OFFSET: usize = 24;
 
 /// Type of a timing response, which is a request whose type bit changed
 /// (`raop_ntp.c:580` and the branch that reads the answer).
 pub const RESPONSE_TYPE: u8 = 0x53;
 
-/// Where a response carries the three values upstream reads
-/// (`raop_ntp.c:656-665`).
+/// Where a response carries the three values the protocol reads
 const RESPONSE_T1_OFFSET: usize = 8;
 const RESPONSE_T2_OFFSET: usize = 16;
 const RESPONSE_T3_OFFSET: usize = 24;
@@ -61,7 +59,7 @@ pub const RESPONSE_MIN_LEN: usize = RESPONSE_T3_OFFSET + 4;
 /// Builds the timing request a receiver sends to a client's timing port.
 ///
 /// `send_time` is the local time in the nanosecond form [`crate::ntp`] works
-/// with; it is written where upstream writes it, so a response can be matched to
+/// with; it is written where the protocol writes it, so a response can be matched to
 /// the request that caused it.
 ///
 /// # Errors
@@ -79,7 +77,7 @@ pub fn build_request(send_time: u64) -> Result<[u8; TIMING_REQUEST_LEN], crate::
 /// The values a timing response carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimingResponse {
-    /// 32 bits at offset eight, the value upstream keeps as `t1`.
+    /// 32 bits at offset eight, the value the protocol keeps as `t1`.
     pub t1: u32,
     /// 32 bits at offset sixteen, the client's receive time.
     pub t2: u32,
@@ -144,11 +142,11 @@ fn read_u32(bytes: &[u8]) -> u32 {
 }
 /// How long a timing request waits for its answer before it is written off.
 ///
-/// Upstream keeps eight outstanding requests (`RAOP_NTP_DATA_COUNT`) and every sample it
+/// The protocol keeps eight outstanding requests (`RAOP_NTP_DATA_COUNT`) and every sample it
 /// has not given up on; a request whose answer never arrives is simply never completed.
 pub const OUTSTANDING_REQUESTS: usize = 8;
 
-/// Samples the offset estimate averages over, which is upstream's table size.
+/// Samples the offset estimate averages over, which is the protocol's table size.
 const SAMPLE_COUNT: usize = 8;
 
 /// Clock error allowed to accumulate per second of elapsed time, as a fraction.
@@ -214,19 +212,18 @@ pub struct ClockSample {
 /// offset is then `((t2 - t1) + (t3 - t4)) / 2`, and a conversion in either direction is
 /// that offset added or subtracted.
 ///
-/// Two things make it more than that arithmetic, and both are upstream's
-/// (`upstream/UxPlay/lib/raop_ntp.c`):
+/// Two things make it more than that arithmetic:
 ///
-/// - The first remote timestamp seen fixes a *fixed offset*, so later arithmetic happens
-///   in one clock domain instead of comparing a client's era to this machine's.
-/// - Estimates are filtered: old samples age out, the lowest-delay sample leads, the rest
-///   are weighted down, and a new estimate is smoothed into the previous one. A single
-///   exchange over a busy network is a bad measurement, and the filter is what stops it
-///   from being the one that counts.
+/// - The first remote timestamp seen fixes a *fixed offset*, so later arithmetic happens in
+///   one clock domain instead of comparing a client's era to this machine's.
+/// - Estimates are filtered: old samples age out, the lowest-delay sample leads, the rest are
+///   weighted down, and a new estimate is smoothed into the previous one. A single exchange
+///   over a busy network is a bad measurement, and the filter is what stops it from being the
+///   one that counts.
 #[derive(Debug, Clone)]
 pub struct RemoteClock {
     samples: [Option<ClockSample>; SAMPLE_COUNT],
-    /// Where the next sample is written, as upstream's `data_index`.
+    /// Where the next sample is written, as the protocol's `data_index`.
     next: usize,
     /// Requests whose answers have not arrived, by the `t1` they carried.
     ///
@@ -270,7 +267,7 @@ impl RemoteClock {
     /// Records a request sent at `t1`, which is the NTP timestamp the answer must echo.
     ///
     /// The table holds [`OUTSTANDING_REQUESTS`] entries and the oldest is overwritten, as
-    /// upstream does. An answer that echoes none of them is not this receiver's, and
+    /// the protocol does. An answer that echoes none of them is not this receiver's, and
     /// [`RemoteClock::response_received`] refuses it.
     pub fn request_sent(&mut self, t1: u32) {
         self.outstanding[self.next % OUTSTANDING_REQUESTS] = t1;
@@ -306,8 +303,8 @@ impl RemoteClock {
         }
 
         // Everything below is integer nanoseconds, because everything on the wire is whole
-        // seconds: `t1`, `t2` and `t3` are thirty-two bits each, and upstream truncates the
-        // arrival time to the same width (`raop_ntp.c:656-697`). Mixing a fraction into
+        // seconds: `t1`, `t2` and `t3` are thirty-two bits each, and the protocol truncates the
+        // arrival time to the same width. Mixing a fraction into
         // that arithmetic is what made the first version of this report an offset of
         // exactly half the round trip for every session.
         let t1_local = (i64::from(t1) - SECONDS_FROM_1900).saturating_mul(1_000_000_000);
@@ -406,7 +403,7 @@ impl RemoteClock {
 
     /// How far the client's era is from this machine's clock, in nanoseconds.
     ///
-    /// `None` until a response has been read. This is upstream's `fixed_offset`: the
+    /// `None` until a response has been read. This is the protocol's `fixed_offset`: the
     /// first remote timestamp seen, taken against the local clock at that moment, and
     /// applied to every later one so the arithmetic happens in one domain.
     #[must_use]
@@ -431,7 +428,7 @@ impl RemoteClock {
     /// high half, which is how long the device had been up.
     ///
     /// The conversion applies the fixed offset first and the smoothed residual second,
-    /// which is the order upstream uses: it adjusts a remote timestamp with
+    /// which is the order the protocol uses: it adjusts a remote timestamp with
     /// `raop_ntp_adjust_remote_timestamp_offset` where it reads it, and converts with
     /// `raop_ntp_convert_remote_time` where it schedules.
     ///
@@ -483,7 +480,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_request_looks_like_the_one_upstream_sends() {
+    fn the_request_looks_like_the_expected_one() {
         // A Unix time in this era, with a fraction so the encoding is exercised.
         let send_time = 1_700_000_000 * ntp::NANOS_PER_SECOND + 123_456_789;
         let request = build_request(send_time).expect("request");
@@ -506,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_response_values_upstream_reads() {
+    fn reads_the_response_values() {
         let mut response = vec![0u8; 32];
         response[1] = RESPONSE_TYPE | 0x80;
         response[8..12].copy_from_slice(&0x1111_1111u32.to_be_bytes());
@@ -531,8 +528,8 @@ mod tests {
 
     /// The exchange carries whole seconds, and a test of it has to say so.
     ///
-    /// `t1`, `t2` and `t3` are thirty-two bits on the wire, and upstream truncates `t4` to
-    /// the same width (`raop_ntp.c:656-697`). So this cannot measure a sub-second offset,
+    /// `t1`, `t2` and `t3` are thirty-two bits on the wire, and the protocol truncates `t4` to
+    /// the same width. So this cannot measure a sub-second offset,
     /// and the numbers below are the honest shape of that: a twenty-millisecond round trip
     /// vanishes, and the delay falls to the precision floor. What the exchange *can* do is
     /// place the client's second counter against this machine's, and the conversion has to

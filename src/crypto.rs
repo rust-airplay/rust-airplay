@@ -95,7 +95,7 @@ pub fn sha512_derive(parts: &[&[u8]], output_len: usize) -> Result<Vec<u8>, Cryp
     Ok(sha512_concat(parts)[..output_len].to_vec())
 }
 
-/// AES-CTR with the OpenSSL EVP counter convention used by UxPlay.
+/// AES-CTR with the OpenSSL EVP counter convention AirPlay uses.
 #[derive(Clone)]
 pub struct Aes128CtrState {
     cipher: Aes128Ctr,
@@ -162,7 +162,7 @@ pub fn aes128_cbc_decrypt(key: &[u8], iv: &[u8], input: &[u8]) -> Result<Vec<u8>
 
 /// Decrypts one AES-128-GCM-16 record with an empty associated-data field.
 ///
-/// UxPlay pairing uses a 16-byte nonce, so a key, IV or tag of any other length
+/// AirPlay pairing uses a 16-byte nonce, so a key, IV or tag of any other length
 /// is rejected with [`CryptoError::InvalidLength`] instead of panicking.
 pub fn aes128_gcm16_decrypt(
     key: &[u8],
@@ -187,7 +187,7 @@ pub fn aes128_gcm16_decrypt(
 /// Encrypts one AES-128-GCM-16 record with an empty associated-data field.
 ///
 /// The counterpart of [`aes128_gcm16_decrypt`], needed for the reply of the
-/// Apple pairing setup (`upstream/UxPlay/lib/pairing.c:632-638`): a key or IV
+/// Apple pairing setup: a key or IV
 /// of any length other than 16 bytes is rejected with
 /// [`CryptoError::InvalidLength`]. Returns the ciphertext and its tag.
 pub fn aes128_gcm16_encrypt(
@@ -224,7 +224,7 @@ pub fn x25519_shared(private_key: &[u8; 32], peer_public: &[u8; 32]) -> [u8; 32]
 /// Ed25519 public key of a 32-byte private seed.
 ///
 /// A receiver advertises the public key of its long-term pairing identity
-/// (`upstream/UxPlay/lib/raop.c:669-674`), so the seed alone is enough to
+///, so the seed alone is enough to
 /// describe the identity a caller injects.
 pub fn ed25519_public_key(private_key: &[u8; 32]) -> [u8; 32] {
     use ed25519_dalek::SigningKey;

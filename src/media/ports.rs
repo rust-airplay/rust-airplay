@@ -7,13 +7,12 @@
 //! drives the receive path over them, so the ports a receiver advertises are the
 //! ports that answer:
 //!
-//! - the **timing** port, where the clock exchange happens (`media::timing`),
-//! - the **control** port, where resends and sync packets arrive
-//!   (`media::control`),
-//! - the **data** port, where the audio datagrams arrive (`media::audio`).
+//! - the **timing** port, where the clock exchange happens ([`super::timing`]),
+//! - the **control** port, where resends and sync packets arrive ([`super::control`]),
+//! - the **data** port, where the audio datagrams arrive ([`super::audio`]).
 //!
-//! Upstream opens exactly these three for an audio session
-//! (`upstream/UxPlay@3dbf7cee:lib/raop_rtp.c:236-244`, which binds a control and
+//! The protocol opens exactly these three for an audio session
+//! (, which binds a control and
 //! a data socket beside the timing socket of `raop_ntp.c`). The mirror stream
 //! adds a TCP listener, and arrives with its own slice.
 //!
@@ -30,7 +29,7 @@ use super::audio::{AudioFrame, AudioSession, WINDOW_CAPACITY};
 
 /// Largest datagram this receiver reads.
 ///
-/// Upstream reads into a fixed buffer too (`raop_rtp.c`), and an audio datagram
+/// The protocol reads into a fixed buffer too, and an audio datagram
 /// is far below this: the bound exists so a client cannot make a receiver
 /// allocate by sending something enormous.
 pub const MAX_DATAGRAM: usize = 2048;
@@ -47,9 +46,9 @@ pub struct MediaSockets {
 
 /// The ports a media session binds, with `0` meaning "the system picks".
 ///
-/// Upstream's `-p n` and `-p` are this: a fixed layout is easier to firewall and easier to
+/// The protocol's `-p n` and `-p` are this: a fixed layout is easier to firewall and easier to
 /// forward, and ephemeral ports are the default because two receivers on one machine must
-/// not fight over them. The mapping is upstream's (`raop.c:784-793`): its `udp[0..2]` are
+/// not fight over them. The mapping is the protocol's: its `udp[0..2]` are
 /// timing, control and data, and its `tcp[0]` is the mirror listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MediaPorts {
@@ -70,10 +69,10 @@ impl MediaPorts {
         Self::default()
     }
 
-    /// Upstream's `-p` without a value: the layout an old client expects.
+    /// The protocol's `-p` without a value: the layout an old client expects.
     ///
-    /// Upstream binds UDP 7011 timing, 6001 control and 6000 data, and TCP 7100 for the
-    /// mirror stream (`uxplay.cpp:1693-1694`). Its control port, 7000, is this crate's
+    /// The protocol binds UDP 7011 timing, 6001 control and 6000 data, and TCP 7100 for the
+    /// mirror stream. Its control port, 7000, is this crate's
     /// [`crate::Config::port`] rather than one of these.
     #[must_use]
     pub fn legacy() -> Self {
@@ -205,9 +204,9 @@ impl MediaSockets {
 
     /// Sends the clock exchange's request to a client.
     ///
-    /// The receiver starts this exchange, not the client: upstream sends its first
+    /// The receiver starts this exchange, not the client: the protocol sends its first
     /// request as soon as `SETUP` is answered and keeps sending them
-    /// (`upstream/UxPlay@3dbf7cee:lib/raop_ntp.c:614-618`, `:839-841`). A session
+    /// A session
     /// that waits to be asked never ticks, and a client with no clock to agree on
     /// has no reason to send its media.
     ///
@@ -381,7 +380,7 @@ impl MediaSockets {
 ///
 /// A TCP stream does not arrive in packets, so the reader asks for exactly the
 /// header and then exactly the payload the header promised
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_rtp_mirror.c:298-302` loops the same way),
+///,
 /// which is why a short read is handled here rather than by a caller.
 #[derive(Debug)]
 pub struct MirrorStream {
@@ -418,9 +417,9 @@ impl MirrorStream {
             match session.receive(&header, &payload) {
                 Ok(Some(frame)) => on_frame(frame, session.info()),
                 Ok(None) => {}
-                // A frame that cannot be read is upstream's "invalid frame", which it
+                // A frame that cannot be read is the protocol's "invalid frame", which it
                 // marks and passes on rather than ending the connection
-                // (`raop_rtp_mirror.c:533-536`). A packet that is off the stream is
+                //. A packet that is off the stream is
                 // not: the receiver has lost the keystream and cannot recover it by
                 // reading more packets.
                 Err(super::mirror::FrameError::NotUnits(_)) => {}
@@ -540,7 +539,7 @@ mod tests {
     use super::*;
     use crate::media::audio::AUDIO_PAYLOAD_TYPE;
 
-    /// A datagram with the audio header upstream documents, encrypted with the
+    /// A datagram with the audio header the protocol documents, encrypted with the
     /// port's own primitive so the test speaks the client's side of the wire.
     fn datagram(sequence: u16, timestamp: u32, key: &[u8; 16], iv: &[u8; 16]) -> Vec<u8> {
         use aes::cipher::{BlockEncryptMut, KeyIvInit};

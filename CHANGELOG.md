@@ -31,5 +31,3 @@ a playback backend implements.
 - Minimum supported Rust version: 1.85 (2024 edition).
 - The library does not print and does not choose paths; it reports through `log` and through
   callbacks on `Config`.
-- Not implemented, and recorded as such in `docs/PARAMETERS.md`: HLS, recording, peer-to-peer
-  discovery, a screensaver, and the reverse event channel those depend on.

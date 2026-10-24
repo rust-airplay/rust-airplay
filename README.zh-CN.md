@@ -4,7 +4,7 @@
 
 它通过 mDNS 广播接收端、应答 AirPlay 控制协议、完成配对、接收投屏与音频、解密两者，并把编码后的帧交给渲染器。它停在编码边界：解码与播放是后端的事，因为一个后端就是一种技术和一棵依赖树。
 
-## 做什么，不做什么
+## 库到哪里为止
 
 | 库负责 | 程序负责 |
 | --- | --- |
@@ -13,7 +13,7 @@
 | 时间戳、节流、音量换算 | PIN 与错误怎么显示 |
 | 为发生的每件事写一条 `log` 记录 | 打印哪些记录、打印到哪里 |
 
-库不打开自己的任何文件、不读环境变量、不打印。它可能写下的两个文件都是显式要求的：`Config::trace_log` 与两个诊断转储。
+库不打开自己的任何文件、不读环境变量、不打印。它可能写下的文件都是显式要求的：`Config::trace_log` 与两个诊断转储。
 
 ## 引入
 
@@ -54,7 +54,7 @@ rust_airplay::run(config).await?;
 
 - [docs/BACKEND.zh-CN.md](docs/BACKEND.zh-CN.md) 是这份契约，按后端遇到的顺序写，包含一个完整的最小实现和检查清单。
 - `examples/recorder.rs` 就是那个实现，随 crate 一起编译。
-- [rust-airplay-gstream](https://github.com/rust-airplay/rust-airplay-gstream) 是参考后端：音频走 GStreamer，视频走 `gst-launch-1.0`。
+- [rust-airplay-gstream](https://github.com/rust-airplay/rust-airplay-gstream) 是一个完整后端：音频走 GStreamer，视频走 `gst-launch-1.0`。
 
 `NullRenderer` 接受一切、什么都不播。它是没有声卡时也能跑通会话的东西，也是新后端用来对比的已知正确消费者。
 
@@ -62,7 +62,6 @@ rust_airplay::run(config).await?;
 
 - [docs/BACKEND.zh-CN.md](docs/BACKEND.zh-CN.md) 与 [BACKEND.md](docs/BACKEND.md)：如何实现播放后端
 - [docs/API.zh-CN.md](docs/API.zh-CN.md) 与 [API.md](docs/API.md)：配置、渲染 trait、模块
-- [docs/PARAMETERS.zh-CN.md](docs/PARAMETERS.zh-CN.md) 与 [PARAMETERS.md](docs/PARAMETERS.md)：上游每一个命令行参数，在本项目中的对应位置
 - [docs/BUILD.zh-CN.md](docs/BUILD.zh-CN.md) 与 [BUILD.md](docs/BUILD.md)：工具链与门禁
 - [docs/ARCHITECTURE.zh-CN.md](docs/ARCHITECTURE.zh-CN.md) 与 [ARCHITECTURE.md](docs/ARCHITECTURE.md)：crate 划分与会话路径
 - [CHANGELOG.md](CHANGELOG.md)：每个版本包含什么
@@ -73,9 +72,7 @@ API 参考是源码构建出的 rustdoc：`cargo doc --open`，或 [docs.rs](htt
 
 ## 状态
 
-版本 0.1.0。公开 API 就是本版本所记录的这一套；1.0 之前仍有可能发生破坏性变更，但并未计划。1.0 是 API 冻结、GStreamer 后端可以与本 crate 一起发布的节点。
-
-涉及协议时语义跟随 UxPlay，差异记录在 [docs/PARAMETERS.zh-CN.md](docs/PARAMETERS.zh-CN.md) 里，而不是留给使用者去发现。
+版本 0.1.0。公开 API 就是本版本所记录的这一套；1.0 之前仍有可能发生破坏性变更，但并未计划。1.0 是 API 冻结、后端可以与本 crate 一起发布的节点。
 
 ## 许可证
 

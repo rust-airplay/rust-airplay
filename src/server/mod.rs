@@ -9,41 +9,27 @@
 //!
 //! # Bounds
 //!
-//! Every limit the service enforces is a documented port decision:
+//! Every limit the service enforces is deliberate:
 //!
-//! * A request head is limited to [`crate::wire::DEFAULT_MAX_HEAD`] and a body
-//!   to [`crate::control::MAX_CONTROL_BODY`]; both are checked before the bytes
-//!   are buffered.
-//! * At most [`ServerConfig::max_connections`] connections are served at once.
-//!   Like upstream, the listener stops accepting while the limit is reached
-//!   instead of rejecting a client, so further connections wait in the kernel
-//!   backlog (`upstream/UxPlay@3dbf7cee:lib/httpd.c:453-462`).
-//! * A connection that is idle for [`ServerConfig::idle_timeout`] is closed, and
-//!   bytes that continue an unfinished request do not refresh that deadline.
-//!   Upstream added the same limit later than the port started
-//!   (`timeout_limit = 60` at `upstream/UxPlay@3dbf7cee:lib/httpd.c:377`), but
-//!   enforces it only once the socket becomes readable again, so a client that
-//!   goes quiet keeps its slot, and it removes the connection without leaving
-//!   the loop, which leaks one request object per timeout. The port uses the same
-//!   60 seconds as a hard deadline instead, the stronger reading of the same
-//!   intent, and the connection task simply returns.
-//! * A request the service cannot frame is answered once
-//!   ([`crate::control::ControlError::to_response`]) and the connection is
-//!   closed, because the bytes after a rejected request cannot be trusted.
+//! * A request head is limited to [`crate::wire::DEFAULT_MAX_HEAD`] and a body to
+//!   [`crate::control::MAX_CONTROL_BODY`]; both are checked before the bytes are buffered.
+//! * At most [`ServerConfig::max_connections`] connections are served at once. The listener
+//!   stops accepting while the limit is reached instead of rejecting a client, so further
+//!   connections wait in the kernel backlog.
+//! * A connection that is idle for [`ServerConfig::idle_timeout`] is closed, and bytes that
+//!   continue an unfinished request do not refresh that deadline. The deadline is hard: the
+//!   connection task returns when it passes, rather than waiting for the socket to become
+//!   readable again.
+//! * A request the service cannot frame is answered once, with
+//!   [`crate::control::ControlError::to_response`], and the connection is closed, because the
+//!   bytes after a rejected request cannot be trusted.
 //!
-//! # Documented differences from upstream
+//! # Connection behaviour
 //!
-//! * Upstream peeks the first eight bytes of every new request and treats
-//!   `HTTP/1.1` and `EVENT/1.0` as the response on a *reverse* connection it
-//!   opened itself (`upstream/UxPlay@3dbf7cee:lib/httpd.c:505-540`). The reverse
-//!   connection belongs to the event channel work, so the port does not open or
-//!   recognise one yet.
-//! * Upstream answers a request whose route it does not implement with its
-//!   default `200 OK`; the port keeps that for an unmatched URL but answers
-//!   `501 Not Implemented` for a route the port has not ported
-//!   (see [`crate::control::Route::is_ported`]).
-//! * `TCP_NODELAY` is enabled on accepted connections to keep a control reply
-//!   from waiting for the delayed-ack timer.
+//! `TCP_NODELAY` is enabled on accepted connections so a control reply does not wait for the
+//! delayed-ack timer. A route this layer answers itself is answered without touching the
+//! handler set; one that carries a session's keys or streams goes to the connection's
+//! [`RouteHandlers`].
 
 mod connection;
 mod handlers;
@@ -70,17 +56,17 @@ pub use pairing::{
     SessionAuth,
 };
 
-/// Connections upstream serves at the same time
-/// (`upstream/UxPlay@3dbf7cee:lib/httpd.c:157`), which is the default of
+/// Connections the protocol serves at the same time
+///, which is the default of
 /// [`ServerConfig::max_connections`].
 pub const MAX_CONNECTIONS: usize = 12;
 
 /// How long a connection may make no progress before it is closed, which is the
 /// default of [`ServerConfig::idle_timeout`].
 ///
-/// It matches the `timeout_limit = 60` upstream added for dead connections
-/// (`upstream/UxPlay@3dbf7cee:lib/httpd.c:377`), with one difference the module
-/// documentation describes: the port applies it as a deadline, upstream only
+/// It matches the `timeout_limit = 60` the protocol added for dead connections
+///, with one difference the module
+/// documentation describes: the port applies it as a deadline, the protocol only
 /// when the socket becomes readable again.
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -89,8 +75,8 @@ pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 pub struct ServerConfig {
     /// Address to listen on.
     ///
-    /// Port `0` binds an ephemeral port, which is what upstream does before it
-    /// advertises the assigned port (`upstream/UxPlay/lib/raop.c:613-617`,
+    /// Port `0` binds an ephemeral port, which is what the protocol does before it
+    /// advertises the assigned port (,
     /// `:834-837`); a receiver that is discovered over mDNS does not need a
     /// fixed one.
     pub bind: SocketAddr,
@@ -100,21 +86,21 @@ pub struct ServerConfig {
     pub idle_timeout: Duration,
     /// Whether a new client takes over from the current one.
     ///
-    /// Upstream's `-nohold`. Off by default: a second client's connection is refused, as
-    /// upstream refuses it with `409 Conflict` when a session is already running
-    /// (`raop.c:271-289`). Turned on, a new connection drops the previous one, which is
+    /// The protocol's `-nohold`. Off by default: a second client's connection is refused, as
+    /// the protocol refuses it with `409 Conflict` when a session is already running
+    /// Turned on, a new connection drops the previous one, which is
     /// what a person switching phones expects. This crate admits several connections at
     /// once by default, so the flag only adds the takeover.
     pub nohold: bool,
     /// How long a session may go without a `/feedback` request before it is closed.
     ///
-    /// Upstream's `-reset`, and its default is fifteen seconds (`uxplay.cpp:86`). `None`
+    /// The protocol's `-reset`, and its default is fifteen seconds. `None`
     /// leaves a silent client connected, which is what this crate did before the option
     /// existed.
     pub feedback_timeout: Option<Duration>,
     /// Audio delay reported to a client by `RECORD`, in microseconds.
     ///
-    /// This is upstream's `-al`: the value the client sees in `Audio-Latency` and
+    /// This is the protocol's `-al`: the value the client sees in `Audio-Latency` and
     /// schedules its own playback against. Zero is legal and means "play as soon as
     /// it arrives"; the range is checked when it is set.
     pub audio_delay_micros: u32,
@@ -196,8 +182,8 @@ impl Server {
     /// # Errors
     ///
     /// Returns the listener error. A connection that fails while it is served is
-    /// not an error of the service: upstream logs it and keeps accepting
-    /// (`upstream/UxPlay@3dbf7cee:lib/httpd.c:371-640`), and so does the port.
+    /// not an error of the service: the protocol logs it and keeps accepting
+    ///, and so does the port.
     ///
     /// # Examples
     ///
@@ -206,8 +192,8 @@ impl Server {
     ///
     /// # async fn serve() -> std::io::Result<()> {
     /// let config = ServerConfig {
-    ///     device: DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Receiver", Vec::new()),
-    ///     ..ServerConfig::default()
+    /// device: DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Receiver", Vec::new()),
+    /// ..ServerConfig::default()
     /// };
     /// let server = Server::bind(config).await?;
     /// println!("control service on {}", server.local_addr()?);
@@ -243,7 +229,7 @@ impl Server {
             let handlers = new_handlers();
             let task = tokio::spawn(async move {
                 let _slot = slot;
-                // Upstream logs this failure and drops the connection.
+                // The protocol logs this failure and drops the connection.
                 let _ = connection::serve(
                     socket,
                     peer,
@@ -295,7 +281,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_nohold_server_drops_the_previous_client() {
-        // Upstream's `-nohold`: a new connection takes the session rather than being
+        // The protocol's `-nohold`: a new connection takes the session rather than being
         // refused. The first client's socket closing is what a takeover looks like from
         // its side.
         let config = ServerConfig {

@@ -182,7 +182,7 @@ fn setup_pin_requires_a_binary_plist_and_a_known_step() {
         session.setup_pin(&request(vec![("method", plist::Value::from("pin"))])),
         Err(PairingError::UnexpectedKeys)
     ));
-    // Upstream's `strncmp` accepts any prefix of "pin" and falls back to the
+    // The protocol's `strncmp` accepts any prefix of "pin" and falls back to the
     // default reply for anything else.
     assert!(matches!(
         session.setup_pin(&request(vec![
@@ -198,7 +198,7 @@ fn setup_pin_rejects_out_of_order_and_oversized_steps() {
     let shared = state(PinMode::Fixed(1234));
     let mut session = PairingSession::new(Arc::clone(&shared));
 
-    // Step 2 and step 3 before step 1: upstream dereferences a null SRP
+    // Step 2 and step 3 before step 1: the protocol dereferences a null SRP
     // context here, the port answers 470 through this error.
     assert!(matches!(
         session.setup_pin(&request(vec![
@@ -233,7 +233,7 @@ fn setup_pin_rejects_out_of_order_and_oversized_steps() {
     ));
 
     // A public value or proof of the wrong length is refused before it
-    // reaches the big-integer math, where upstream over-reads the buffer.
+    // reaches the big-integer math, where the protocol over-reads the buffer.
     let mut fresh = PairingSession::new(Arc::clone(&shared));
     fresh
         .setup_pin(&request(vec![
@@ -274,7 +274,7 @@ fn setup_pin_refuses_the_third_step_without_a_verified_proof() {
         ]))
         .expect("step 1");
 
-    // The attack upstream is open to: derive the step 3 keys from the
+    // The attack the protocol is open to: derive the step 3 keys from the
     // all-zero session key of a context whose proof was never checked.
     let zero_key = [0u8; APPLE_SESSION_KEY_SIZE];
     let attacker_key = [0x11u8; ED25519_KEY_SIZE];
@@ -396,7 +396,7 @@ fn a_one_time_pin_survives_a_bounded_number_of_failures() {
 fn pair_setup_answers_the_public_key_only_for_the_right_length() {
     let shared = state(PinMode::Fixed(1234));
     let mut session = PairingSession::new(Arc::clone(&shared));
-    // Upstream ignores the content of the body and only checks its length.
+    // The protocol ignores the content of the body and only checks its length.
     let reply = session.setup(&[0u8; 32]).expect("legacy setup");
     assert_eq!(body_of(&reply), shared.identity_public());
     assert_eq!(session.status, Status::Setup);
@@ -430,7 +430,7 @@ impl VerifyClient {
     }
 
     /// Step 1 body: a four-byte mode, the client key exchange key and the
-    /// client's public key (`upstream/UxPlay/lib/raop_handlers.h:488-497`).
+    /// client's public key.
     fn handshake_body(&self) -> Vec<u8> {
         let mut body = vec![1u8, 0, 0, 0];
         body.extend_from_slice(&self.public);
@@ -474,7 +474,7 @@ fn pair_verify_handshakes_and_finishes() {
     let shared = state(PinMode::Fixed(1234));
     let mut session = PairingSession::new(Arc::clone(&shared));
     // Legacy setup puts the connection into the state pair-verify needs,
-    // which is also how upstream lets a client verify the receiver.
+    // which is also how the protocol lets a client verify the receiver.
     session.setup(&[0u8; 32]).expect("setup");
 
     let client = VerifyClient::new();
@@ -518,7 +518,7 @@ fn pair_verify_refuses_a_bad_signature_and_keeps_its_shape() {
         Ok(PairingReply::Silence)
     ));
     // A body of the wrong length and an unknown mode both fall through to
-    // the default reply, which upstream's `switch` has no default for.
+    // the default reply, which the protocol's `switch` has no default for.
     assert!(matches!(
         session.verify(&[1u8; 67]),
         Ok(PairingReply::Silence)
@@ -535,7 +535,7 @@ fn pair_verify_refuses_a_bad_signature_and_keeps_its_shape() {
 
 #[test]
 fn pair_verify_without_setup_follows_the_pin_policy() {
-    // No PIN: upstream lets the client fall back to the legacy setup.
+    // No PIN: the protocol lets the client fall back to the legacy setup.
     let mut session = PairingSession::new(state(PinMode::Disabled));
     assert!(matches!(
         session.verify(&[1u8; 68]),
@@ -564,7 +564,7 @@ fn pair_verify_honours_the_registration_predicate() {
     );
     let mut session = PairingSession::new(Arc::clone(&shared));
     let client = VerifyClient::new();
-    // Upstream stops checking the list once the connection reaches its setup
+    // The protocol stops checking the list once the connection reaches its setup
     // state, so a refused client would only have to ask again; the refusal
     // has to survive the retry.
     for attempt in 0..2 {

@@ -1,32 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The audio stream a client sends after `SETUP`.
 //!
-//! Upstream receives audio datagrams, unwraps the RTP header, decrypts the
+//! The protocol receives audio datagrams, unwraps the RTP header, decrypts the
 //! payload and hands the result to a renderer in sequence order
-//! (`upstream/UxPlay@3dbf7cee:lib/raop_rtp.c:558-668`, with the buffering and
+//! (, with the buffering and
 //! loss detection in `lib/raop_buffer.c`). This module is that path: it parses a
 //! datagram, decrypts the payload, and delivers frames in sequence order through a
 //! bounded reorder window, recording what went missing so a resend can be asked for.
 //!
 //! # What a datagram looks like
 //!
-//! The layout is documented by upstream at `raop_rtp.c:558-565`:
+//! The layout is documented by the protocol at `raop_rtp.c:558-565`:
 //!
 //! ```text
-//! packet[0]      0x80
-//! packet[1]      0x60, that is payload type 96
-//! packet[2:3]    sequence number, big endian
-//! packet[4:7]    RTP timestamp, big endian
-//! packet[8:11]   0x00 0x00 0x00 0x00
-//! packet[12..]   encrypted audio payload
+//! packet[0] 0x80
+//! packet[1] 0x60, that is payload type 96
+//! packet[2:3] sequence number, big endian
+//! packet[4:7] RTP timestamp, big endian
+//! packet[8:11] 0x00 0x00 0x00 0x00
+//! packet[12..] encrypted audio payload
 //! ```
 //!
 //! A datagram shorter than twelve bytes is not a packet at all
-//! (`raop_rtp.c:608-616`). Two shapes of "not audio yet" exist in a stream that
+//! Two shapes of "not audio yet" exist in a stream that
 //! is starting: an AAC-ELD stream begins with length-16 packets whose payload is
-//! the marker `00 68 34 00` instead of audio (`raop_rtp.c:577-581`), and an ALAC
+//! the marker `00 68 34 00` instead of audio, and an ALAC
 //! stream begins with length-44 packets whose payload carries format information
-//! rather than samples (`raop_rtp.c:583-587`). Both are reported as what they
+//! rather than samples. Both are reported as what they
 //! are, so a renderer never plays a marker as sound.
 //!
 //! Decryption is [`decrypt_payload`], and it is not a plain CBC over the payload:
@@ -42,18 +42,17 @@ use crate::rtp;
 use super::control::{self, ControlError};
 use crate::wire::ParseError;
 
-/// Payload type upstream names for audio (`raop_rtp.c:559`).
+/// Payload type the protocol names for audio.
 pub const AUDIO_PAYLOAD_TYPE: u8 = 96;
 
 /// The marker an AAC-ELD stream sends in place of audio while it starts
-/// (`raop_rtp.c:578`).
 pub const NO_DATA_MARKER: [u8; 4] = [0x00, 0x68, 0x34, 0x00];
 
 /// Datagrams a reorder window holds before it gives up on a gap.
 ///
-/// Upstream's buffer is sized for the same purpose: it has to absorb the
+/// The protocol's buffer is sized for the same purpose: it has to absorb the
 /// reordering a network produces without keeping a client able to make a
-/// receiver allocate without bound (`lib/raop_buffer.c`).
+/// receiver allocate without bound.
 pub const WINDOW_CAPACITY: usize = 512;
 
 /// What one audio datagram turned out to be.
@@ -81,8 +80,7 @@ pub enum AudioPayloadKind {
 /// Why a datagram could not be read as audio.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioPacketError {
-    /// Shorter than the twelve byte header; upstream ignores these
-    /// (`raop_rtp.c:608-616`).
+    /// Shorter than the twelve byte header; the protocol ignores these
     TooShort,
     /// The RTP header itself did not parse.
     Header(ParseError),
@@ -132,18 +130,17 @@ pub fn parse_audio_packet(datagram: &[u8]) -> Result<AudioPacket<'_>, AudioPacke
     })
 }
 
-/// Decrypts one audio payload the way upstream does
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_buffer.c:116-137`).
+/// Decrypts one audio payload the way the protocol does
 ///
 /// Two details there are easy to get wrong and are therefore stated here:
 ///
-/// - Only the part that fills whole blocks is encrypted: upstream decrypts
-///   `payload_size / 16 * 16` bytes and copies the remaining tail through
-///   unchanged, so a payload whose length is not a multiple of sixteen ends in
-///   clear bytes rather than being padded.
-/// - The cipher is reset for every packet, which makes each packet start from the
-///   same IV that `SETUP` carried. Nothing chains across packets, so a receiver
-///   that decrypted them as one stream would produce noise.
+/// - Only the part that fills whole blocks is encrypted: the receiver decrypts
+///   `payload_size / 16 * 16` bytes and copies the remaining tail through unchanged, so a
+///   payload whose length is not a multiple of sixteen ends in clear bytes rather than being
+///   padded.
+/// - The cipher is reset for every packet, which makes each packet start from the same IV that
+///   `SETUP` carried. Nothing chains across packets, so a receiver that decrypted them as one
+///   stream would produce noise.
 ///
 /// # Errors
 ///
@@ -236,7 +233,7 @@ impl AudioSession {
     /// Reads one datagram and returns the frames that are ready for a renderer.
     ///
     /// The marker an AAC-ELD stream starts with is delivered undecrypted:
-    /// upstream treats it as a packet with no audio in it, so decrypting it would
+    /// the protocol treats it as a packet with no audio in it, so decrypting it would
     /// produce nonsense.
     ///
     /// # Errors
@@ -261,8 +258,8 @@ impl AudioSession {
     /// Reads one control datagram and returns any audio it delivered.
     ///
     /// A client answers a resend request by sending the audio packet again on the
-    /// control port, wrapped in four bytes upstream skips
-    /// (`upstream/UxPlay@3dbf7cee:lib/raop_rtp.c`, the `0x56` branch). The audio
+    /// control port, wrapped in four bytes the protocol skips
+    /// The audio
     /// inside goes through the same path as a packet that arrived on the data
     /// port, so a resend fills the gap the window is waiting for instead of being
     /// treated as a duplicate.
@@ -397,7 +394,7 @@ impl ReorderWindow {
     /// A client sends `FLUSH` when what it played is no longer what it is about to play:
     /// after a pause, a seek, or a switch of media. Everything queued is audio nobody
     /// wants, and the sequence the client names is the next one it considers playable
-    /// (`upstream/UxPlay/lib/raop_rtp.c`, `raop_rtp_flush`). Without this, resuming
+    /// Without this, resuming
     /// plays back whatever was buffered before the pause.
     pub fn flush(&mut self, next: u16) {
         self.pending.clear();
@@ -414,7 +411,7 @@ impl ReorderWindow {
     /// Accepts a frame and returns the frames that are now in order.
     ///
     /// A frame that is older than what has already been delivered is dropped: it
-    /// duplicates audio a renderer has played, and upstream's buffer drops those
+    /// duplicates audio a renderer has played, and the protocol's buffer drops those
     /// too rather than replaying them. A frame so far ahead that no amount of
     /// waiting could order it is taken as a new starting point, which is what a
     /// stream restart looks like from here.
@@ -503,7 +500,7 @@ impl ReorderWindow {
 mod tests {
     use super::*;
 
-    /// A datagram with the header upstream documents and `payload` after it.
+    /// A datagram with the header the protocol documents and `payload` after it.
     fn datagram(sequence: u16, timestamp: u32, payload: &[u8]) -> Vec<u8> {
         let mut bytes = vec![0x80, AUDIO_PAYLOAD_TYPE];
         bytes.extend_from_slice(&sequence.to_be_bytes());
@@ -523,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_header_upstream_documents() {
+    fn reads_the_documented_header() {
         let bytes = datagram(0x1234, 0x0000_abcd, &[1, 2, 3, 4]);
         let packet = parse_audio_packet(&bytes).expect("audio packet");
         assert_eq!(packet.sequence, 0x1234);
@@ -749,9 +746,9 @@ mod tests {
     fn decrypts_only_whole_blocks_and_copies_the_tail() {
         let key = [0x11; 16];
         let iv = [0x22; 16];
-        // Sixteen bytes of audio and five bytes that no block covers: upstream
+        // Sixteen bytes of audio and five bytes that no block covers: the protocol
         // decrypts the first part and passes the rest through unchanged
-        // (raop_buffer.c:130-136).
+        //.
         let mut plaintext = vec![0x8c; 16];
         plaintext.extend_from_slice(b"clear");
         assert_eq!(plaintext.len(), 21);

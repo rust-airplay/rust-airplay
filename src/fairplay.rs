@@ -239,7 +239,7 @@ mod tests {
         let mut handshake = [0u8; HANDSHAKE_REQUEST_LEN];
         handshake[4] = 0x03;
         // Byte 12 selects the PlayFair message mode; 4 is outside the four modes
-        // UxPlay implements, so the transform must refuse the request.
+        // AirPlay implements, so the transform must refuse the request.
         handshake[12] = 4;
         session.handshake(&handshake).unwrap();
         assert_eq!(

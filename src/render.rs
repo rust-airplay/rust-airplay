@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! What a renderer has to accept, and a renderer that accepts everything.
 //!
-//! Upstream splits the work in two: `lib/` receives the media and `renderers/` is a
+//! The protocol splits the work in two: `lib/` receives the media and `renderers/` is a
 //! sub-project of its own that decodes and plays it, with the application wiring the
-//! two together (`upstream/UxPlay@3dbf7cee:renderers/`). [`docs/ARCHITECTURE.md`] took the
+//! two together. [`docs/ARCHITECTURE.md`] took the
 //! same shape for this crate and deferred the exact interface to the moment the first
 //! renderer landed: this crate is that moment.
 //!
@@ -49,7 +49,6 @@ impl AudioCodec {
     /// The number this coding is known by in the `cn` record.
     ///
     /// `0` is PCM, `1` ALAC, `2` AAC and `3` AAC-ELD
-    /// (`upstream/UxPlay/lib/dnssdint.h`, `RAOP_CN`).
     #[must_use]
     pub fn codec_number(self) -> u8 {
         match self {
@@ -60,8 +59,8 @@ impl AudioCodec {
 
     /// The coding a client's `ct` names, when it names one this crate decodes.
     ///
-    /// `2` is ALAC and `8` is AAC-ELD (`raop_rtp.c:113`). A client states one or the
-    /// other in `SETUP`, and upstream takes its decoder from that rather than from a
+    /// `2` is ALAC and `8` is AAC-ELD. A client states one or the
+    /// other in `SETUP`, and the protocol takes its decoder from that rather than from a
     /// setting: both are compressed, and a decoder handed the wrong one reports a stream it
     /// cannot read rather than the mix-up.
     ///
@@ -140,8 +139,7 @@ pub struct VideoConfig {
 /// The coding a mirror stream carries.
 ///
 /// A client sends one of the two and does not change mid-session, and the two need
-/// different parsers and decoders. Upstream keeps the same distinction as a flag
-/// (`upstream/UxPlay/lib/raop_rtp_mirror.c:195`, `h265_video`).
+/// different parsers and decoders. The protocol keeps the same distinction as a flag
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VideoCodec {
     /// H.264, which is what every client sends unless told otherwise.
@@ -165,7 +163,7 @@ impl VideoCodec {
 /// The volume an AirPlay client means by the number it sends.
 ///
 /// A client states volume in decibels over `-30` to `0`, and `-144` is its mute signal
-/// (`uxplay.cpp:2803-2821`). A renderer wants a linear gain, so the two scales meet here:
+/// A renderer wants a linear gain, so the two scales meet here:
 /// the fraction is how far up the slider the client is, and the curve turns that into the
 /// gain a sound card understands.
 ///
@@ -201,10 +199,9 @@ pub fn airplay_db_to_fraction(db: f64) -> f64 {
 
 /// How a client's slider position becomes a gain.
 ///
-/// This is upstream's `-db` and `-taper` together. Flat rescaled the `-30..0` decibel range
+/// This is the protocol's `-db` and `-taper` together. Flat rescaled the `-30..0` decibel range
 /// onto `low_db..high_db`; tapered makes each halving of the remaining slider length a
 /// halving of loudness (ten decibels), which is how several AirPlay senders behave
-/// (`uxplay.cpp:2830-2846`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VolumeCurve {
     /// Use the tapered profile rather than the flat one.
@@ -256,8 +253,8 @@ impl VolumeCurve {
     ///
     /// // The tapered profile is louder than the flat one in the middle of the slider.
     /// let tapered = VolumeCurve {
-    ///     taper: true,
-    ///     ..VolumeCurve::default()
+    /// taper: true,
+    /// ..VolumeCurve::default()
     /// };
     /// assert!(tapered.gain(0.5) > flat.gain(0.5));
     /// ```
@@ -469,7 +466,7 @@ pub trait VideoStream: fmt::Debug + Send + Sync {
     /// Holds the picture where it is, when the client says it stopped sending.
     ///
     /// A mirroring client that stops, or an app that covers the screen, says so in a codec
-    /// packet (`raop_rtp_mirror.c:580-586`). A backend that owns a window can freeze it
+    /// packet. A backend that owns a window can freeze it
     /// here; the default does nothing, because a pipeline that simply stops receiving
     /// frames already holds its last one.
     ///
@@ -538,11 +535,11 @@ impl NullRenderer {
     /// let renderer = Arc::new(NullRenderer::new());
     /// let stream = renderer.open_audio(AudioConfig::default()).expect("a stream");
     /// stream
-    ///     .push(AudioFrame {
-    ///         data: vec![0; 4],
-    ///         timestamp: 0,
-    ///     })
-    ///     .expect("a frame");
+    /// .push(AudioFrame {
+    /// data: vec![0; 4],
+    /// timestamp: 0,
+    /// })
+    /// .expect("a frame");
     /// assert_eq!(renderer.audio_frames(), 1);
     /// ```
     pub fn new() -> Self {

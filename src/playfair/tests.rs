@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn sap_scramble_matches_upstream_vector() {
+fn sap_scramble_matches_the_vector() {
     let input =
         std::array::from_fn::<_, 64, _>(|index| (index as u8).wrapping_mul(37).wrapping_add(11));
     assert_eq!(
@@ -29,7 +29,7 @@ fn sap_scramble_matches_upstream_vector() {
 }
 
 #[test]
-fn playfair_decrypt_matches_upstream() {
+fn playfair_decrypt_matches_the_vectors() {
     let mut message =
         std::array::from_fn::<_, 164, _>(|index| (index as u8).wrapping_mul(23).wrapping_add(9));
     message[12] = 0;
@@ -45,7 +45,7 @@ fn playfair_decrypt_matches_upstream() {
 }
 
 #[test]
-fn message_decrypt_matches_upstream_modes() {
+fn message_decrypt_matches_modes() {
     for (mode, expected) in [
         (
             0,
@@ -117,7 +117,7 @@ fn message_decrypt_matches_upstream_modes() {
 }
 
 #[test]
-fn key_schedule_and_cycle_match_upstream() {
+fn key_schedule_and_cycle_match() {
     let key =
         std::array::from_fn::<_, 16, _>(|index| (index as u8).wrapping_mul(37).wrapping_add(11));
     let block =
@@ -148,7 +148,7 @@ fn key_schedule_and_cycle_match_upstream() {
     );
 }
 #[test]
-fn session_key_matches_upstream_vector() {
+fn session_key_matches_the_vector() {
     let old_sap =
         std::array::from_fn::<_, 256, _>(|index| (index as u8).wrapping_mul(17).wrapping_add(5));
     let message =
@@ -162,7 +162,7 @@ fn session_key_matches_upstream_vector() {
     );
 }
 
-fn sap_hash_matches_upstream_vector() {
+fn sap_hash_matches_the_vector() {
     let input =
         std::array::from_fn::<_, 64, _>(|index| (index as u8).wrapping_mul(37).wrapping_add(11));
     assert_eq!(
@@ -173,7 +173,7 @@ fn sap_hash_matches_upstream_vector() {
         ]
     );
 }
-fn modified_md5_matches_upstream_vector() {
+fn modified_md5_matches_the_vector() {
     let block =
         std::array::from_fn::<_, 64, _>(|index| (index as u8).wrapping_mul(37).wrapping_add(11));
     let key = std::array::from_fn::<_, 16, _>(|index| {

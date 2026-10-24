@@ -1,37 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! RTSP/HTTP control-plane routing and per-connection session state.
 //!
-//! [`dispatch`] mirrors the method and URL table of
-//! `upstream/UxPlay/lib/raop.c:406-478`. [`ControlSession`] adds the
-//! per-connection state that upstream keeps in `raop_conn_t`, and
-//! [`ControlResponse`] ports the response framing of
-//! `upstream/UxPlay/lib/http_response.c:71-170`. Socket I/O, service discovery
-//! and the media sessions a `SETUP` request describes stay outside this module.
+//! [`dispatch`] turns a request's method and target into a [`Route`]. [`ControlSession`] adds
+//! the state a connection carries: the session identifier, the RTSP lifecycle, the audio delay
+//! a `RECORD` reports, and the peer address a timing exchange needs. [`ControlResponse`] builds
+//! and frames the reply, including the headers that go on every RTSP answer.
 //!
-//! # Documented differences from upstream
+//! # What a route gets
 //!
-//! * A request this module cannot parse is rejected with a status upstream also
-//!   uses: `400 Bad Request` for a malformed start line, malformed headers, an
-//!   unusable `Content-Length` or a body past [`MAX_CONTROL_BODY`], and
-//!   `431 Request Header Fields Too Large` for a head past
-//!   [`crate::wire::DEFAULT_MAX_HEAD`] (`upstream/UxPlay/lib/raop.c:232-238`).
-//!   Upstream's httpd drops a request whose head it cannot parse; the port
-//!   answers instead of failing silently.
-//! * Every rejection is a bare status line. Upstream's `431` path returns
-//!   before it adds anything (`raop.c:236-238`), and the port extends that to
-//!   all rejections so an unusable request never influences a response header.
-//! * Routes upstream serves but this crate has not ported answer `501 Not
-//!   Implemented` (see [`Route::is_ported`]).
-//! * `ANNOUNCE` is an extension: upstream has no such route, and the port keeps
-//!   it out of [`PUBLIC_METHODS`] so it is never advertised.
-//! * [`ControlState`] is this crate's summary of the RTSP lifecycle. Upstream
-//!   tracks a connection type plus `raop_rtp`/`raop_rtp_mirror` handles instead,
-//!   so this state is informational and never rejects a request.
-//! * `SETUP`, `RECORD`, `FLUSH` and `TEARDOWN` are answered with the
-//!   control-plane envelope only: the plist streams, keys and RTP ports they
-//!   describe, and the `Authorization`/digest handling of a real `SETUP`
-//!   (`upstream/UxPlay/lib/raop_handlers.h:624-1067`), land with the network
-//!   service work (`docs/ARCHITECTURE.md`, W5).
+//! A few routes are answered here: `OPTIONS`, `RECORD`, `TEARDOWN`, and `ANNOUNCE`, which this
+//! crate accepts as an extension so a client can announce a session before `SETUP`. Everything
+//! else is handed to the connection's [`RouteHandler`], which is where `SETUP` and the pairing
+//! routes live because they carry the session's key material and stream requests. Without a
+//! handler, or when a handler declines, the answer is `501 Not Implemented`: a `200 OK` for
+//! work that was not done is a promise the client cannot check.
+//!
+//! # Rejections
+//!
+//! A request that cannot be framed or parsed is answered rather than dropped: `400 Bad Request`
+//! for a malformed start line, malformed headers, an unusable `Content-Length` or a body past
+//! [`MAX_CONTROL_BODY`], and `431 Request Header Fields Too Large` for a head past
+//! [`crate::wire::DEFAULT_MAX_HEAD`]. The rejection is a bare status line, so an unusable
+//! request never influences a response header.
+//!
+//! Socket I/O, discovery and the media sessions a `SETUP` describes stay outside this module;
+//! the server module owns those.
 
 use std::fmt;
 
@@ -43,56 +36,46 @@ use crate::wire::{
 
 /// Largest request body the control plane accepts.
 ///
-/// Bodies this large are rejected before they are buffered; upstream does not
-/// bound them at all, so the bound is a documented port limit.
+/// Bodies this large are rejected before they are buffered, so a client cannot make the
+/// receiver allocate without bound.
 pub const MAX_CONTROL_BODY: usize = 64 * 1024;
 
 /// Value of the `Server` header.
 ///
-/// Upstream sends `"AirTunes/" GLOBAL_VERSION` (`upstream/UxPlay/lib/raop.c:489`)
-/// and `upstream/UxPlay/lib/global.h:22` defines `GLOBAL_VERSION` as `220.68`,
-/// so the port keeps that wire identity instead of inventing a version string.
+/// The value is `AirTunes/220.68`, which is the identity a client recognises; the receiver keeps
+/// it rather than inventing a version string.
 pub const SERVER_HEADER_VALUE: &str = "AirTunes/220.68";
 
 /// `Audio-Jack-Status` used by every RTSP response that carries a `CSeq`,
-/// except `RECORD` (`upstream/UxPlay/lib/raop.c:338-340`).
+/// except `RECORD`.
 pub const AUDIO_JACK_STATUS: &str = "connected; type=digital";
 
-/// `Audio-Jack-Status` sent by the `RECORD` handler
-/// (`upstream/UxPlay/lib/raop_handlers.h:1226`).
+/// `Audio-Jack-Status` sent by the `RECORD` handler.
 pub const AUDIO_JACK_STATUS_RECORD: &str = "connected; type=analog";
 
-/// `Public` header value for `OPTIONS`
-/// (`upstream/UxPlay/lib/raop_handlers.h:596`).
+/// `Public` header value for `OPTIONS`.
 pub const PUBLIC_METHODS: &str =
     "SETUP, RECORD, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER";
 
-/// Sample rate of every audio format upstream supports
-/// (`upstream/UxPlay/lib/raop_handlers.h:27`).
+/// Sample rate of every audio format the protocol supports.
 pub const AUDIO_SAMPLE_RATE: u32 = 44_100;
 
-/// Audio delay upstream starts with, in microseconds
-/// (`upstream/UxPlay/lib/raop.c:639`).
+/// Audio delay the protocol starts with, in microseconds.
 pub const DEFAULT_AUDIO_DELAY_MICROS: u32 = 250_000;
 
-/// Largest audio delay upstream accepts, in microseconds
-/// (`upstream/UxPlay/lib/raop.c:759-761`).
+/// Largest audio delay the protocol accepts, in microseconds.
 pub const MAX_AUDIO_DELAY_MICROS: u32 = 10 * 1_000_000;
 
 /// Converts an audio delay into the sample count of the `Audio-Latency` header.
 ///
-/// This is `audio_delay_micros * AUDIO_SAMPLE_RATE / 1_000_000` exactly as
-/// `upstream/UxPlay/lib/raop_handlers.h:1222` computes it. The multiplication
-/// runs in 64 bits and the conversion falls back to `u32::MAX`, so no input can
-/// wrap or panic.
+/// This is `audio_delay_micros * AUDIO_SAMPLE_RATE / 1_000_000`. The multiplication runs in
+/// 64 bits and the conversion falls back to `u32::MAX`, so no input can wrap or panic.
 pub fn audio_latency_samples(audio_delay_micros: u32) -> u32 {
     let samples = u64::from(audio_delay_micros) * u64::from(AUDIO_SAMPLE_RATE) / 1_000_000;
     u32::try_from(samples).unwrap_or(u32::MAX)
 }
 
-/// One entry of the upstream control-plane route table.
-///
-/// Names follow the upstream handler that serves the route.
+/// One entry of the control-plane route table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
     /// `POST /feedback`
@@ -109,7 +92,7 @@ pub enum Route {
     FairPlaySetup,
     /// `POST /audioMode`
     AudioMode,
-    /// `GET` whose URL contains `/info` (upstream matches with `strstr`)
+    /// `GET` whose URL contains `/info`
     Info,
     /// `OPTIONS`, any target
     Options,
@@ -148,26 +131,24 @@ pub enum Route {
     /// `PUT /setProperty?...`
     SetProperty,
     /// HLS request: a `Host` header without `CSeq` and without
-    /// `X-Apple-Session-ID` (`upstream/UxPlay/lib/raop.c:270`).
+    /// `X-Apple-Session-ID`.
     Hls,
-    /// `ANNOUNCE`, which upstream does not dispatch at all.
+    /// `ANNOUNCE`, which the protocol does not dispatch at all.
     ///
     /// This crate keeps it as a documented extension so a session can be
     /// announced before `SETUP`; it is deliberately absent from
-    /// [`PUBLIC_METHODS`] because upstream never advertises it.
+    /// [`PUBLIC_METHODS`] because the protocol never advertises it.
     Announce,
 }
 
 impl Route {
-    /// Whether this crate implements the route's control-plane behavior.
+    /// Whether this layer answers the route itself.
     ///
-    /// An unported route answers `501 Not Implemented` rather than the upstream
-    /// handler's `200 OK`, so an unimplemented handler can never be mistaken for
-    /// success. `RECORD`, `FLUSH` and `TEARDOWN` are ported as the RTSP envelope
-    /// only; their media handling lands with S4. `SETUP` is served by a
-    /// [`RouteHandler`] because it carries the session's key material and stream
-    /// requests, and a control layer without one answers `501` for it.
-    pub fn is_ported(self) -> bool {
+    /// The routes it answers are `OPTIONS`, `RECORD`, `FLUSH`, `TEARDOWN` and `ANNOUNCE`.
+    /// Every other route is offered to the connection's [`RouteHandler`], because those routes
+    /// carry the session's key material and stream requests; a connection without one, or a
+    /// handler that declines, is answered `501 Not Implemented`.
+    pub fn is_local(self) -> bool {
         matches!(
             self,
             Self::Options | Self::Record | Self::Flush | Self::Teardown | Self::Announce
@@ -175,7 +156,7 @@ impl Route {
     }
 }
 
-/// Request facts the upstream dispatcher keys on.
+/// Request facts the protocol dispatcher keys on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestFacts<'a> {
     /// Request method as sent.
@@ -207,8 +188,8 @@ impl<'a> RequestFacts<'a> {
 
     /// Whether this is a response to a Bluetooth LE beacon advertisement.
     ///
-    /// `upstream/UxPlay/lib/raop.c:257`: an `RTSP/1.0` request without `CSeq`
-    /// that mentions `txtAirPlay` or `txtRAOP` is such a response, and upstream
+    /// an `RTSP/1.0` request without `CSeq`
+    /// that mentions `txtAirPlay` or `txtRAOP` is such a response, and the protocol
     /// does not ignore it even when HLS support is off.
     pub fn is_ble_beacon_response(self) -> bool {
         self.version == "RTSP/1.0"
@@ -216,32 +197,32 @@ impl<'a> RequestFacts<'a> {
             && (self.target.contains("txtAirPlay") || self.target.contains("txtRAOP"))
     }
 
-    /// Whether this is an HLS request (`upstream/UxPlay/lib/raop.c:270`).
+    /// Whether this is an HLS request.
     pub fn is_hls_request(self) -> bool {
         self.has_host && !self.has_cseq && !self.has_session_id
     }
 }
 
-/// Result of one upstream route lookup.
+/// Result of one route lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dispatch {
-    /// Upstream serves the route and this crate implements it.
-    Ported(Route),
-    /// Upstream serves the route but this crate has not ported it, so the
-    /// response is `501 Not Implemented`.
-    NotImplemented(Route),
-    /// Upstream selected no handler and answers its default `200 OK` with no body.
+    /// This layer answers the route itself.
+    Local(Route),
+    /// The route is offered to the connection's [`RouteHandler`]; a connection without one
+    /// answers `501 Not Implemented`.
+    Delegated(Route),
+    /// No route matched. The request is answered `200 OK` with no body.
     Unhandled,
-    /// Upstream answers `501 Not Implemented` for an unknown RTSP method
-    /// (`upstream/UxPlay/lib/raop.c:442-444`).
+    /// The method is not one the RTSP table knows. The request is answered `501 Not
+    /// Implemented`.
     UnknownRtspMethod,
 }
 
-/// Looks up one request in the upstream route table.
+/// Looks up one request in the route table.
 ///
-/// Upstream compares the protocol string exactly, so `RTSP/2.0` or any other
-/// version selects no handler. The HLS rule precedes both protocol tables
-/// (`upstream/UxPlay/lib/raop.c:406`, `:445-478`).
+/// The protocol string is compared exactly, so `RTSP/2.0` selects no route. The HLS rule is
+/// checked before the RTSP and HTTP tables, because an HLS request is recognised by its headers
+/// rather than by a method.
 pub fn dispatch(facts: &RequestFacts<'_>) -> Dispatch {
     if facts.is_hls_request() {
         return classify(Route::Hls);
@@ -254,10 +235,10 @@ pub fn dispatch(facts: &RequestFacts<'_>) -> Dispatch {
 }
 
 fn classify(route: Route) -> Dispatch {
-    if route.is_ported() {
-        Dispatch::Ported(route)
+    if route.is_local() {
+        Dispatch::Local(route)
     } else {
-        Dispatch::NotImplemented(route)
+        Dispatch::Delegated(route)
     }
 }
 
@@ -327,8 +308,8 @@ fn dispatch_http(facts: &RequestFacts<'_>) -> Dispatch {
             _ => return Dispatch::Unhandled,
         },
         "PUT" if facts.target.starts_with("/setProperty?") => Route::SetProperty,
-        // Upstream has no 501 branch for HTTP/1.1: an unknown method leaves the
-        // default 200 response untouched (`upstream/UxPlay/lib/raop.c:445-475`).
+        // The protocol has no 501 branch for HTTP/1.1: an unknown method leaves the
+        // default 200 response untouched.
         _ => return Dispatch::Unhandled,
     };
     classify(route)
@@ -336,29 +317,27 @@ fn dispatch_http(facts: &RequestFacts<'_>) -> Dispatch {
 
 /// Lifecycle state this crate observes for one connection.
 ///
-/// The transitions are informational: upstream's routing layer is stateless, so
+/// The transitions are informational: the protocol's routing layer is stateless, so
 /// no request is ever rejected because of this state
-/// (`upstream/UxPlay/lib/raop.c:406-478`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ControlState {
     /// Nothing has been announced or set up yet.
     #[default]
     New,
-    /// `ANNOUNCE` was seen. Upstream has no such route; the port keeps the
+    /// `ANNOUNCE` was seen. The protocol has no such route; the port keeps the
     /// announcement as an extension.
     Announced,
     /// `SETUP` was seen.
     Setup,
     /// `RECORD` was seen after `SETUP`.
     Recording,
-    /// `TEARDOWN` was seen; upstream also closes the connection
-    /// (`upstream/UxPlay/lib/raop_handlers.h:1284`).
+    /// `TEARDOWN` was seen; the protocol also closes the connection
     Closed,
 }
 
 /// One response to write back on the connection.
 ///
-/// The layout follows `upstream/UxPlay/lib/http_response.c:71-170`: the status
+/// The layout follows: the status
 /// line echoes the request protocol, headers keep insertion order, and
 /// `Content-Length` is appended last and only when there is a body or a
 /// `Content-Type` header.
@@ -366,7 +345,7 @@ pub enum ControlState {
 pub struct ControlResponse {
     /// Protocol echoed in the status line, for example `RTSP/1.0`.
     ///
-    /// `upstream/UxPlay/lib/raop.c:335` initializes the response with the
+    /// initializes the response with the
     /// request's protocol, so an HTTP/1.1 peer is answered with `HTTP/1.1`.
     pub protocol: String,
     /// Numeric status code.
@@ -379,8 +358,8 @@ pub struct ControlResponse {
     pub body: Vec<u8>,
     /// Whether the connection is closed once this response is written.
     ///
-    /// Upstream asks its connection to disconnect through
-    /// `http_response_set_disconnect` (`upstream/UxPlay/lib/http_response.c:172-186`),
+    /// The protocol asks its connection to disconnect through
+    /// `http_response_set_disconnect`,
     /// which `RAOP` uses for `TEARDOWN` and for a failed `/pair-verify`
     /// signature. It is not visible on the wire by itself.
     pub close_after_reply: bool,
@@ -409,7 +388,7 @@ impl ControlResponse {
 
     /// Serializes the response exactly as `http_response_finish` does.
     ///
-    /// `upstream/UxPlay/lib/http_response.c:131-170` appends `Content-Length`
+    /// appends `Content-Length`
     /// and the body when there is a body, appends `Content-Length: 0` when there
     /// is no body but a `Content-Type` header was set, and otherwise terminates
     /// the head with an empty line and no `Content-Length` at all.
@@ -452,7 +431,7 @@ pub struct RouteRequest<'a> {
     /// The peer this request arrived from, when the transport knows it.
     ///
     /// A `SETUP` needs it: the clock exchange is the receiver's to start, and it
-    /// goes to the address the request came from (`raop_ntp.c:617-618`). A request
+    /// goes to the address the request came from. A request
     /// built without a transport — a unit test, a replay — has none.
     pub peer: Option<SocketAddr>,
 }
@@ -461,8 +440,8 @@ pub struct RouteRequest<'a> {
 ///
 /// The control plane wraps it into a [`ControlResponse`]: it echoes the request
 /// protocol and prepends `Audio-Jack-Status` the way
-/// `upstream/UxPlay/lib/raop.c:338-340` does, appends `Server` and `CSeq`
-/// afterwards (`raop.c:488-492`), and leaves the status code, reason phrase,
+/// does, appends `Server` and `CSeq`
+/// afterwards, and leaves the status code, reason phrase,
 /// body and handler headers to the handler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteReply {
@@ -479,19 +458,15 @@ pub struct RouteReply {
 }
 
 impl RouteReply {
-    /// `200 OK` with no headers and no body, upstream's default response
-    /// (`upstream/UxPlay/lib/raop.c:334-335`).
+    /// `200 OK` with no headers and no body, the protocol's default response
     pub fn ok() -> Self {
         Self::new(200, "OK")
     }
 
-    /// `501 Not Implemented`.
+    /// A `501 Not Implemented` reply.
     ///
-    /// Upstream answers this for an unknown RTSP method
-    /// (`upstream/UxPlay/lib/raop.c:442-444`) and for an unsupported FairPlay
-    /// setup challenge (`raop_handlers.h:558`). This crate also uses it for every
-    /// route upstream serves that it has not implemented yet, so an unimplemented
-    /// handler can never be mistaken for the upstream `200 OK`.
+    /// It answers an unknown RTSP method, an unsupported FairPlay setup challenge, and a route
+    /// no handler served, so a client never mistakes work that was not done for success.
     pub fn not_implemented() -> Self {
         Self::new(501, "Not Implemented")
     }
@@ -534,13 +509,13 @@ impl RouteReply {
     }
 }
 
-/// Serves the routes that upstream implements but this control layer does not.
+/// Serves the routes that the protocol implements but this control layer does not.
 ///
 /// The trait exists so that the routing table, the request preconditions
 /// (unusable `CSeq`, HLS and Bluetooth LE handling) and the response header
 /// order live in exactly one place: [`ControlSession::handle_with`], a direct
-/// port of `upstream/UxPlay/lib/raop.c:232-494`. A handler therefore contributes
-/// only the status, reason, body and the headers its upstream handler adds.
+/// port of. A handler therefore contributes
+/// only the status, reason, body and the headers its the protocol handler adds.
 ///
 /// One handler instance serves one connection, so it may hold per-connection
 /// protocol state such as a FairPlay or pairing session.
@@ -552,7 +527,7 @@ pub trait RouteHandler {
 
     /// Is told about every request this connection answered.
     ///
-    /// Upstream logs the same facts (`upstream/UxPlay/lib/raop.c:347-360` logs
+    /// The protocol logs the same facts ( logs
     /// the method and URL of each request). A trace carries only what a client
     /// sends in the clear — method, target, `CSeq`, `User-Agent`,
     /// `Content-Type`, body length and the answer's status — and never a body,
@@ -590,8 +565,8 @@ pub struct RequestTrace<'a> {
     pub content_type: Option<&'a str>,
     /// `Active-Remote` token, when the client sent one.
     ///
-    /// Upstream records it on the connection and hands it to its caller
-    /// (`upstream/UxPlay/lib/raop.c:342-351`). It names the remote-control
+    /// The protocol records it on the connection and hands it to its caller
+    /// It names the remote-control
     /// client a request came from, and it authorizes nothing: the header is
     /// written by whoever connects.
     pub active_remote: Option<&'a str>,
@@ -606,10 +581,10 @@ pub struct RequestTrace<'a> {
     pub status: u16,
 }
 
-/// A [`RouteHandler`] that implements no route.
+/// A [`RouteHandler`] that serves no route.
 ///
-/// Every route upstream serves but the port has not implemented answers
-/// `501 Not Implemented`; this is what [`ControlSession::handle`] uses.
+/// Every delegated route is answered `501 Not Implemented`; this is what
+/// [`ControlSession::handle`] uses.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NoHandler;
 
@@ -625,8 +600,8 @@ pub enum ControlError {
     /// The request head could not be parsed. Answered with `400 Bad Request`.
     Parse(ParseError),
     /// The head block exceeded [`DEFAULT_MAX_HEAD`]. Answered with
-    /// `431 Request Header Fields Too Large`, the code upstream uses for
-    /// overlong request headers (`upstream/UxPlay/lib/raop.c:232-238`).
+    /// `431 Request Header Fields Too Large`, the code the protocol uses for
+    /// overlong request headers.
     HeadTooLarge {
         /// Size of the head that was rejected.
         declared: usize,
@@ -634,7 +609,7 @@ pub enum ControlError {
         maximum: usize,
     },
     /// The declared body exceeded [`MAX_CONTROL_BODY`]. Answered with
-    /// `400 Bad Request`; upstream bounds no body, so this is a port limit.
+    /// `400 Bad Request`; the protocol bounds no body, so this is a port limit.
     BodyTooLarge {
         /// Declared body size.
         declared: usize,
@@ -644,13 +619,13 @@ pub enum ControlError {
     /// The request carried an `X-Apple-Session-ID` that differs from the one
     /// this connection already used, so it belongs to another session.
     ///
-    /// `upstream/UxPlay/lib/raop.c:400-402` asserts the same equality; the port
+    /// asserts the same equality; the port
     /// answers `400 Bad Request` instead of aborting.
     SessionMismatch,
 }
 
 impl ControlError {
-    /// Status code and reason phrase upstream associates with this failure.
+    /// Status code and reason phrase the protocol associates with this failure.
     pub fn status(&self) -> (u16, &'static str) {
         match self {
             Self::HeadTooLarge { .. } => (431, "Request Header Fields Too Large"),
@@ -662,8 +637,8 @@ impl ControlError {
 
     /// Builds the bare rejection response for this failure.
     ///
-    /// The response carries no headers: upstream's `431` path returns before any
-    /// header is added (`upstream/UxPlay/lib/raop.c:236-238`), and the port
+    /// The response carries no headers: the protocol's `431` path returns before any
+    /// header is added, and the port
     /// never echoes fields of a request it rejected. `protocol` is the protocol
     /// to put in the status line; a caller that could not parse the head at all
     /// passes the protocol it expects.
@@ -711,11 +686,11 @@ pub enum ControlOutcome {
     Respond(ControlResponse),
     /// Write nothing and keep the connection open.
     ///
-    /// Upstream drops the request in two cases: an unusable `CSeq` value
-    /// (`upstream/UxPlay/lib/raop.c:247-250`) and a request without `CSeq` while
+    /// The protocol drops the request in two cases: an unusable `CSeq` value
+    /// and a request without `CSeq` while
     /// HLS support is off and the request is not a BLE beacon response
-    /// (`upstream/UxPlay/lib/raop.c:263-266`). Its httpd then sends no response
-    /// at all (`upstream/UxPlay@3dbf7cee:lib/httpd.c:588-625`).
+    /// Its httpd then sends no response
+    /// at all.
     Ignored,
 }
 
@@ -737,7 +712,7 @@ impl Default for ControlSession {
 }
 
 impl ControlSession {
-    /// Creates a session with upstream's defaults: HLS support off and a
+    /// Creates a session with the protocol's defaults: HLS support off and a
     /// [`DEFAULT_AUDIO_DELAY_MICROS`] audio delay.
     pub fn new() -> Self {
         Self {
@@ -759,7 +734,7 @@ impl ControlSession {
         self.session_id.as_deref()
     }
 
-    /// Enables HLS request handling, mirroring upstream's `-hls` option.
+    /// Enables HLS request handling, mirroring the protocol's `-hls` option.
     ///
     /// The port implements no HLS handler, so enabling this only turns the
     /// silent drop of a CSeq-less request with a `Host` header into an explicit
@@ -771,7 +746,7 @@ impl ControlSession {
     /// Tells the session which peer it is serving.
     ///
     /// A `SETUP` needs it to know where to send the clock exchange, which the
-    /// receiver starts (`raop_ntp.c:617-618`). A session with no peer serves
+    /// receiver starts. A session with no peer serves
     /// requests whose routes do not need one.
     pub fn set_peer(&mut self, peer: SocketAddr) {
         self.peer = Some(peer);
@@ -780,7 +755,7 @@ impl ControlSession {
     /// Sets the audio delay reported by `RECORD` in `Audio-Latency`.
     ///
     /// The accepted range is `0..=`[`MAX_AUDIO_DELAY_MICROS`]
-    /// (`upstream/UxPlay/lib/raop.c:759-761`); validating configuration input is
+    ///; validating configuration input is
     /// the configuration layer's job, and this stores the value as given.
     pub fn set_audio_delay_micros(&mut self, micros: u32) {
         self.audio_delay_micros = micros;
@@ -788,18 +763,12 @@ impl ControlSession {
 
     /// Handles one complete request and decides what to write back.
     ///
-    /// The steps follow `upstream/UxPlay/lib/raop.c:232-494`:
-    ///
-    /// 1. bound and parse the head, then bound the declared body and require it
-    ///    to be present;
-    /// 2. read `CSeq`, dropping the request when it is unusable
-    ///    (`raop.c:247-250`);
-    /// 3. drop a request without `CSeq` unless HLS support is on or the request
-    ///    is a BLE beacon response (`raop.c:263-266`);
-    /// 4. bind the connection to the first `X-Apple-Session-ID` it sees and
-    ///    reject a later different one (`raop.c:400-402`);
-    /// 5. route by method and URL, then add the headers upstream adds:
-    ///    `Audio-Jack-Status`, the handler's headers, `Server` and `CSeq`.
+    /// The steps are: bound and parse the head, then bound the declared body and require it to
+    /// be present; read `CSeq` and drop the request when it is unusable; drop a request without
+    /// `CSeq` unless HLS support is on or it is a BLE beacon response; bind the connection to
+    /// the first `X-Apple-Session-ID` it sees and reject a later different one; route by method
+    /// and URL; and add the headers the protocol adds - `Audio-Jack-Status`, the handler's
+    /// headers, `Server` and `CSeq`.
     ///
     /// # Errors
     ///
@@ -807,15 +776,13 @@ impl ControlSession {
     /// answers with [`ControlError::to_response`], whose status code comes from
     /// [`ControlError::status`].
     ///
-    /// This is [`ControlSession::handle_with`] with a [`NoHandler`], so every
-    /// route upstream serves that the port has not implemented answers
-    /// `501 Not Implemented`.
+    /// This is [`ControlSession::handle_with`] with a [`NoHandler`], so a delegated route is
+    /// answered `501 Not Implemented`.
     pub fn handle(&mut self, input: &[u8]) -> Result<ControlOutcome, ControlError> {
         self.handle_with(input, &mut NoHandler)
     }
 
-    /// Handles one complete request, letting `handler` serve the routes this
-    /// layer does not implement itself.
+    /// Handles one complete request, letting `handler` serve the routes this layer delegates.
     ///
     /// The network service passes its per-connection [`RouteHandler`] here.
     ///
@@ -837,8 +804,8 @@ impl ControlSession {
         let cseq = match head.header("cseq") {
             None => None,
             Some(value) => match value.trim().parse::<u32>() {
-                // Upstream drops a request whose CSeq is not a non-negative
-                // integer instead of answering it (`raop.c:241-250`).
+                // The protocol drops a request whose CSeq is not a non-negative
+                // integer instead of answering it.
                 Err(_) => return Ok(ControlOutcome::Ignored),
                 Ok(cseq) => Some(cseq),
             },
@@ -860,15 +827,14 @@ impl ControlSession {
         }
 
         let reply = match dispatch(&facts) {
-            Dispatch::Ported(route) => {
+            Dispatch::Local(route) => {
                 self.observe(route);
                 ported_reply(route, self.audio_delay_micros)
             }
-            // Upstream serves the route; a handler that has not implemented it
-            // answers 501 rather than pretending to succeed. A handler that does
-            // serve it also gives the route its lifecycle meaning, which is why
-            // the state is observed here and not for a 501.
-            Dispatch::NotImplemented(route) => {
+            // The route is delegated; a handler that does not serve it answers 501 rather than
+            // pretending to succeed. A handler that does serve it also gives the route its
+            // lifecycle meaning, which is why the state is observed here and not for a 501.
+            Dispatch::Delegated(route) => {
                 match handler.handle(
                     route,
                     &RouteRequest {
@@ -928,12 +894,12 @@ impl ControlSession {
 
     /// Records what a ported route means for the observed lifecycle state.
     ///
-    /// The mapping is monotone and permissive, because upstream answers all of
+    /// The mapping is monotone and permissive, because the protocol answers all of
     /// these routes with `200 OK` regardless of what came before
-    /// (`upstream/UxPlay/lib/raop.c:406-478`, `raop_handlers.h:1215-1250`):
+    ///
     /// `OPTIONS` never changes the state, a second `SETUP` does not rewind a
     /// recording session, and `FLUSH` outside a recording session is a no-op
-    /// upstream only logs a warning about.
+    /// the protocol only logs a warning about.
     fn observe(&mut self, route: Route) {
         self.state = match route {
             Route::Announce if self.state == ControlState::New => ControlState::Announced,
@@ -953,9 +919,9 @@ impl ControlSession {
 
 /// Reply for a route this control layer implements itself.
 ///
-/// `OPTIONS` and `RECORD` contribute the headers their upstream handlers add
-/// (`upstream/UxPlay/lib/raop_handlers.h:596`, `:1225-1226`), and `TEARDOWN`
-/// asks the peer to close the connection (`raop_handlers.h:1284`).
+/// `OPTIONS` and `RECORD` contribute the headers their the protocol handlers add
+///, and `TEARDOWN`
+/// asks the peer to close the connection.
 fn ported_reply(route: Route, audio_delay_micros: u32) -> RouteReply {
     match route {
         Route::Options => RouteReply::ok().with_header("Public", PUBLIC_METHODS),

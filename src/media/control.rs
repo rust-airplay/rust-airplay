@@ -1,35 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The control channel of an audio session.
 //!
-//! Beside the port that carries audio datagrams, a session has a control port.
-//! Three things travel over it, all of them documented in upstream's source:
+//! Beside the port that carries audio datagrams, a session has a control port. Three things
+//! travel over it:
 //!
-//! - **A resend request**, from this receiver to the client, when audio went
-//!   missing: eight bytes, and the client answers by sending the audio packets
-//!   again (`upstream/UxPlay@3dbf7cee:lib/raop_rtp.c:203-233`).
-//! - **A resent audio packet**, from the client, carrying the audio packet at
-//!   offset four (`raop_rtp.c:...`, the `type_c == 0x56` branch).
-//! - **A sync packet**, which says where the stream is in RTP time and in the
-//!   client's clock (`raop_rtp.c:...`, the `type_c == 0x54` branch):
+//! - **A resend request**, from this receiver to the client, when audio went missing: eight
+//!   bytes, and the client answers by sending the audio packets again.
+//! - **A resent audio packet**, from the client, carrying the audio packet at offset four.
+//! - **A sync packet**, which says where the stream is in RTP time and in the client's clock:
 //!
-//!   ```text
-//!   packet[0]      0x80, or 0x90 for the first one
-//!   packet[1]      0xd4, whose type is 0x54
-//!   packet[2:3]    0x00 0x04
-//!   packet[4:7]    sync_rtp, big endian
-//!   packet[8:15]   the client's NTP timestamp, big endian
-//!   packet[16:19]  next_rtp, big endian
-//!   ```
+//! ```text
+//! packet[0] 0x80, or 0x90 for the first one
+//! packet[1] 0xd4, whose type is 0x54
+//! packet[2:3] 0x00 0x04
+//! packet[4:7] sync_rtp, big endian
+//! packet[8:15] the client's NTP timestamp, big endian
+//! packet[16:19] next_rtp, big endian
+//! ```
 //!
 //! The type of a control packet is `packet[1] & !0x80`, which is why the bytes
 //! above look like 0xd5 and 0xd4 rather than 0x55 and 0x54.
 
 /// The first byte of every packet this receiver sends on the control channel
-/// (`raop_rtp.c:219`).
 const CONTROL_MARKER: u8 = 0x80;
 
 /// Type of a resend request, before the marker bit is added
-/// (`raop_rtp.c:220`).
 const TYPE_RESEND_REQUEST: u8 = 0x55;
 
 /// Type of a resent audio packet (`raop_rtp.c`, the `0x56` branch).
@@ -107,7 +102,7 @@ impl std::error::Error for ControlError {}
 
 /// Reads one control packet.
 ///
-/// Upstream reads `packet[1]` without looking at the length first; this crate
+/// The protocol reads `packet[1]` without looking at the length first; this crate
 /// refuses what it cannot read instead of reading past the datagram.
 ///
 /// # Errors
@@ -158,7 +153,6 @@ pub fn parse_control_packet(datagram: &[u8]) -> Result<ControlPacket<'_>, Contro
 }
 
 /// Builds the request that asks a client to send audio again
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_rtp.c:203-233`).
 ///
 /// `control_sequence` counts the requests this receiver has sent, `sequence` is
 /// the first audio packet wanted and `count` how many of them, so a client can
@@ -189,7 +183,7 @@ fn read_u64(bytes: &[u8]) -> Option<u64> {
 mod tests {
     use super::*;
 
-    /// A resent audio packet with `audio` at offset four, as upstream reads it.
+    /// A resent audio packet with `audio` at offset four, as the protocol reads it.
     fn resent(sequence: u16, audio: &[u8]) -> Vec<u8> {
         let mut bytes = vec![0x80, TYPE_RESENT_AUDIO | CONTROL_MARKER, 0x00, 0x00];
         bytes.extend_from_slice(audio);
@@ -266,12 +260,12 @@ mod tests {
     }
 
     #[test]
-    fn builds_the_resend_request_upstream_builds() {
+    fn builds_the_resend_request() {
         let request = resend_request(7, 0x1234, 3);
         assert_eq!(&request[..2], &[0x80, 0xd5], "marker and type");
         assert_eq!(&request[2..4], &7u16.to_be_bytes(), "control sequence");
         assert_eq!(&request[4..6], &0x1234u16.to_be_bytes(), "first wanted");
         assert_eq!(&request[6..8], &3u16.to_be_bytes(), "how many");
-        assert_eq!(request.len(), 8, "upstream sends exactly eight bytes");
+        assert_eq!(request.len(), 8, "a resend request is exactly eight bytes");
     }
 }

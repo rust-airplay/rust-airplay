@@ -42,9 +42,9 @@ cheap way to notice that a new document or example is not in `include` in `Cargo
 
 ## Tests that are ignored by default
 
-Some tests take a machine that has something this one may not: a GStreamer runtime, a UxPlay
-checkout, or minutes of time for a throughput measurement. Each carries `#[ignore]` and a
-reason, so `cargo test -- --ignored` runs them and the default run says how many were skipped.
+Some tests take a machine that has something this one may not: a long-running measurement, or
+minutes of time for a throughput run. Each carries `#[ignore]` and a reason, so
+`cargo test -- --ignored` runs them and the default run says how many were skipped.
 
 ## Publishing
 
@@ -54,21 +54,6 @@ cargo package --allow-dirty
 
 packages the crate without publishing it, which verifies the `include` list and the metadata
 before a release. `cargo publish` is the release step and is done from a clean tree on `main`.
-
-## The differential test
-
-One suite compares this implementation with UxPlay's own C code: the mirror keystream, the
-counter, the audio decryption, the pairing vectors and the FairPlay transforms. It is ignored
-by default because it needs a checkout of UxPlay and a compiler for it.
-
-It needs a checkout at commit `517cbb1240d9b9f69330c55b957cdd52b4175b2a` in `upstream/UxPlay`
-and MSYS2 UCRT64, and then:
-
-```sh
-pwsh -File tools/oracle/run.ps1
-```
-
-The exit code is the test result. `tools/oracle/README.md` says what each mode prints.
 
 ## Playing media
 

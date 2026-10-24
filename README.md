@@ -7,7 +7,7 @@ receives screen mirroring and audio, decrypts both, and hands coded frames to a 
 stops at the coding boundary: decoding and playback are a backend's job, because a backend is
 one technology and one dependency tree.
 
-## What it does, and what it leaves out
+## Where the library stops
 
 | The library | The program |
 | --- | --- |
@@ -17,8 +17,7 @@ one technology and one dependency tree.
 | a `log` record for everything that happens | which records are printed, and to what |
 
 The library opens no file of its own, reads no environment variable and prints nothing. The
-two files it can write are asked for explicitly: `Config::trace_log` and the two diagnostic
-dumps.
+files it can write are asked for explicitly: `Config::trace_log` and the two diagnostic dumps.
 
 ## Adding it
 
@@ -62,7 +61,7 @@ handle, and a program ends it the way it ends any other process.
 
 ## Playing the media
 
-`Renderer` is the seam. It has three methods — `open_audio`, `open_video`, `set_volume` — and
+`Renderer` is the seam. It has three methods - `open_audio`, `open_video`, `set_volume` - and
 two streams, `AudioStream` and `VideoStream`. What crosses the seam is already coded: an audio
 frame's payload, or a video access unit in Annex-B form with its parameter sets in front of
 it. A backend therefore needs a decoder and a device, and nothing about AirPlay.
@@ -70,8 +69,8 @@ it. A backend therefore needs a decoder and a device, and nothing about AirPlay.
 - [docs/BACKEND.md](docs/BACKEND.md) is the contract, in the order a backend meets it, with a
   complete minimal implementation and a checklist.
 - `examples/recorder.rs` is that implementation, compiled with the crate.
-- [rust-airplay-gstream](https://github.com/rust-airplay/rust-airplay-gstream) is the
-  reference backend: GStreamer for audio, `gst-launch-1.0` for video.
+- [rust-airplay-gstream](https://github.com/rust-airplay/rust-airplay-gstream) is a complete
+  backend: GStreamer for audio, `gst-launch-1.0` for video.
 
 `NullRenderer` accepts everything and plays nothing. It is what a session can run against
 without a sound card, and what a new backend can be compared with.
@@ -82,9 +81,6 @@ without a sound card, and what a new backend can be compared with.
   implement a playback backend
 - [docs/API.md](docs/API.md) and [API.zh-CN.md](docs/API.zh-CN.md): configuration, the renderer
   traits, the modules
-- [docs/PARAMETERS.md](docs/PARAMETERS.md) and
-  [PARAMETERS.zh-CN.md](docs/PARAMETERS.zh-CN.md): every UxPlay command-line option, and where
-  it lives here
 - [docs/BUILD.md](docs/BUILD.md) and [BUILD.zh-CN.md](docs/BUILD.zh-CN.md): the toolchain and
   the gates
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
@@ -99,11 +95,8 @@ documentation on [docs.rs](https://docs.rs/rust-airplay).
 ## Status
 
 Version 0.1.0. The public API is the one this release documents; a breaking change before 1.0
-is possible but not planned. Version 1.0 is the point where the API is frozen and the
-GStreamer backend can be published beside this crate.
-
-Semantics follow UxPlay where the protocol is concerned, and the differences are recorded in
-[docs/PARAMETERS.md](docs/PARAMETERS.md) rather than left to be discovered.
+is possible but not planned. Version 1.0 is the point where the API is frozen and the backend
+can be published beside this crate.
 
 ## Licence
 

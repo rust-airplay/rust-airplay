@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! One accepted control connection.
 //!
-//! The loop is the port of `upstream/UxPlay@3dbf7cee:lib/httpd.c:371-640`: read bytes,
+//! The loop is the port of: read bytes,
 //! frame them into requests, answer each one, and stop when the peer closes or
 //! when the connection stops making progress.
 
@@ -34,13 +34,13 @@ pub(super) async fn serve<H: RouteHandler>(
     audio_delay_micros: u32,
     feedback_timeout: Option<Duration>,
 ) -> Result<()> {
-    // Upstream leaves Nagle enabled on control connections; a control reply is
+    // The protocol leaves Nagle enabled on control connections; a control reply is
     // one small write, so the port disables it to avoid delaying each answer by
     // the TCP delayed-ack timer.
     socket.set_nodelay(true)?;
     let (mut reader, mut writer) = socket.into_split();
-    // Upstream closes a session whose client stopped asking for feedback
-    // (`uxplay.cpp:577-587`). The handler set records the last request; this loop is what
+    // The protocol closes a session whose client stopped asking for feedback
+    //. The handler set records the last request; this loop is what
     // acts on it, because a socket nobody reads is not a connection worth keeping open.
     let feedback_clock = handlers.feedback_clock();
     let feedback_deadline = feedback_timeout.map(|timeout| {
@@ -48,15 +48,15 @@ pub(super) async fn serve<H: RouteHandler>(
         (timeout, clock)
     });
     let mut session = ControlSession::new();
-    // Upstream reports the audio delay on `RECORD`, and a caller sets it with `-al`.
+    // The protocol reports the audio delay on `RECORD`, and a caller sets it with `-al`.
     session.set_audio_delay_micros(audio_delay_micros);
     // A `SETUP` on this connection needs to know where to send the clock exchange,
-    // which is the address the connection came from (`raop_ntp.c:617-618`).
+    // which is the address the connection came from.
     session.set_peer(peer);
     let mut buffer: Vec<u8> = Vec::new();
     let mut chunk = [0u8; READ_CHUNK];
-    // Upstream removes a connection that has been silent for longer than its
-    // `timeout_limit` (`upstream/UxPlay@3dbf7cee:lib/httpd.c:377`, `:473-478`),
+    // The protocol removes a connection that has been silent for longer than its
+    // `timeout_limit`,
     // but only checks that age once the socket becomes readable again, so a
     // client that simply goes quiet keeps its slot. The port treats the same
     // limit as a deadline, and bytes that continue an unfinished request do not
@@ -84,7 +84,7 @@ pub(super) async fn serve<H: RouteHandler>(
                             return Ok(());
                         }
                     }
-                    // `raop.c:247-250` and `:263-266`: upstream answers a
+                    // `raop.c:247-250` and `:263-266`: the protocol answers a
                     // request it cannot use with nothing at all.
                     Ok(ControlOutcome::Ignored) => {}
                     Err(error) => {
@@ -109,8 +109,8 @@ pub(super) async fn serve<H: RouteHandler>(
             return Ok(());
         }
         // A session kept alive by `/feedback` also expires by it: a client that stops
-        // asking has gone, even if its socket has not closed. Upstream checks the same
-        // limit and resets the session (`uxplay.cpp:577-587`). The read below is capped
+        // asking has gone, even if its socket has not closed. The protocol checks the same
+        // limit and resets the session. The read below is capped
         // by whichever deadline is nearer, because a socket that stays silent would
         // otherwise keep this loop asleep past the feedback timeout.
         let mut wait = deadline - now;
@@ -153,8 +153,8 @@ fn now_millis() -> u64 {
 /// Writes the rejection response for `error` and closes the connection.
 ///
 /// A rejected request cannot be framed, so the bytes after it cannot be trusted
-/// either: upstream removes the connection when its parser rejects a request
-/// (`upstream/UxPlay@3dbf7cee:lib/httpd.c:574-585`), and the port answers once and then
+/// either: the protocol removes the connection when its parser rejects a request
+///, and the port answers once and then
 /// closes instead of guessing where the next request starts.
 async fn reject<W: AsyncWriteExt + Unpin>(
     writer: &mut W,
@@ -167,8 +167,8 @@ async fn reject<W: AsyncWriteExt + Unpin>(
     close_connection(writer).await
 }
 
-/// Half-closes the write side, which is what upstream does before it closes a
-/// connection (`upstream/UxPlay@3dbf7cee:lib/httpd.c:214-254`).
+/// Half-closes the write side, which is what the protocol does before it closes a
+/// connection.
 async fn close_connection<W: AsyncWriteExt + Unpin>(writer: &mut W) -> Result<()> {
     match writer.shutdown().await {
         Ok(()) => Ok(()),
@@ -182,8 +182,8 @@ async fn close_connection<W: AsyncWriteExt + Unpin>(writer: &mut W) -> Result<()
 ///
 /// A request the port rejects may have no parsable head, so the first request
 /// line is scanned for the protocol name. `RTSP/1.0` is the fallback because
-/// that is the protocol of the control service a receiver advertises; upstream
-/// echoes the protocol its parser recognised (`raop.c:237`).
+/// that is the protocol of the control service a receiver advertises; the protocol
+/// echoes the protocol its parser recognised.
 fn protocol_of(input: &[u8]) -> &'static str {
     let window = &input[..input.len().min(PROTOCOL_SNIFF_BYTES)];
     let line = window
@@ -253,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_without_feedback_is_closed_by_its_timeout() {
-        // Upstream's `-reset`: a client that stops asking for feedback has gone, even
+        // The protocol's `-reset`: a client that stops asking for feedback has gone, even
         // though its socket has not closed. A connection whose handler records feedback
         // and then receives none must expire.
         use std::time::Instant as StdInstant;

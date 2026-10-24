@@ -13,15 +13,13 @@
 //! independent keys, so the map behavior is what the handlers are written
 //! against and `plist_spec.rs` pins it.
 //!
-//! UxPlay speaks the binary and XML property-list formats through libplist:
-//! `upstream/UxPlay/lib/raop.c:370` parses SETUP requests, `raop.c:518` parses
-//! `/pair-verify` requests, and responses are written with `plist_to_bin`
-//! (`upstream/UxPlay/lib/raop_handlers.h:246`). This module keeps the same
-//! observable behavior behind two rules the rest of the port depends on:
+//! AirPlay speaks the binary and XML property-list formats: `SETUP` and `/pair-verify` bodies
+//! are property lists, and responses are written as one. This module provides the two rules the
+//! rest of the crate depends on:
 //!
 //! - the payload size is checked before the parser runs;
-//! - typed access returns a typed error instead of panicking, so a malformed or
-//!   truncated request body can never abort the process.
+//! - typed access returns a typed error instead of panicking, so a malformed or truncated
+//!   request body can never abort the process.
 //!
 //! Values are handed out as [`plist::Value`] on purpose: navigation of deeper
 //! structures (for example `streams[]`) needs the full value API, and this crate
@@ -48,7 +46,7 @@ pub const MAX_PLIST_BYTES: usize = 64 * 1024;
 /// The backing parser descends recursively, so a deeply nested list that is far
 /// below the size bound would abort the process with a stack overflow instead of
 /// returning an error. Real AirPlay payloads nest three or four levels
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:600-1067`), so the bound is
+///, so the bound is
 /// generous and still far away from the stack limit.
 pub const MAX_PLIST_DEPTH: usize = 32;
 
@@ -149,7 +147,7 @@ impl Plist {
         self.value.as_dictionary()
     }
 
-    /// Looks up a key without requiring it to exist, mirroring how upstream
+    /// Looks up a key without requiring it to exist, mirroring how the protocol
     /// checks optional request fields before reading them.
     pub fn get(&self, key: &str) -> Option<&plist::Value> {
         self.root_dictionary()?.get(key)

@@ -56,7 +56,6 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// The stream type a mirroring client asks for, whose entry carries the
 /// `streamConnectionID` the mirror keys are derived from
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:954-983`).
 const MIRROR_STREAM_TYPE: u16 = 110;
 
 /// The device identifier a seed derives its keys from.
@@ -334,7 +333,7 @@ pub struct Config {
     /// The coding an audio stream is expected to carry, when the client does not say.
     ///
     /// A client states its coding as `ct` in the `SETUP` that names the stream
-    /// (`raop_handlers.h:995-1030`), and that declaration wins. This value is what a
+    ///, and that declaration wins. This value is what a
     /// session falls back to when the client never declares one, which is what older
     /// clients did.
     pub audio_codec: AudioCodec,
@@ -352,45 +351,45 @@ pub struct Config {
     pub dump_audio: Option<std::path::PathBuf>,
     /// The audio delay reported to a client by `RECORD`.
     ///
-    /// Upstream's `-al`. A client schedules its own playback against the number it reads
+    /// The protocol's `-al`. A client schedules its own playback against the number it reads
     /// from `Audio-Latency`: too small and every packet is late, too large and the stream
-    /// starts late. The default is upstream's quarter of a second.
+    /// starts late. The default is the protocol's quarter of a second.
     pub audio_latency: std::time::Duration,
     /// Whether a new client takes over from the current one.
     ///
-    /// Upstream's `-nohold`. Off by default: this crate serves several connections at once,
-    /// which is more permissive than upstream, and the flag adds the takeover a person
+    /// The protocol's `-nohold`. Off by default: this crate serves several connections at once,
+    /// which is more permissive than the protocol, and the flag adds the takeover a person
     /// switching phones expects.
     pub nohold: bool,
     /// How long a session may go without `/feedback` before it is closed.
     ///
-    /// Upstream's `-reset`, which defaults to fifteen seconds there. `None` leaves a silent
+    /// The protocol's `-reset`, which defaults to fifteen seconds there. `None` leaves a silent
     /// client connected.
     pub feedback_timeout: Option<std::time::Duration>,
     /// The ports the media session binds.
     ///
-    /// Upstream's `-p n` and `-p`. The default lets the system choose every port and tells
+    /// The protocol's `-p n` and `-p`. The default lets the system choose every port and tells
     /// the client what it got in `SETUP`, which is what a receiver discovered over mDNS
     /// does not need anything else for. A fixed layout is for a firewall or a port forward,
-    /// and [`crate::media::ports::MediaPorts::legacy`] is upstream's own.
+    /// and [`crate::media::ports::MediaPorts::legacy`] is the protocol's own.
     pub ports: crate::media::ports::MediaPorts,
     /// Which clients may start a session.
     ///
-    /// Upstream's `-restrict`, `-allow` and `-block`. The policy is checked in `SETUP`,
+    /// The protocol's `-restrict`, `-allow` and `-block`. The policy is checked in `SETUP`,
     /// where the client has named itself and before any key is derived; a refused client
     /// is answered `403 Forbidden`.
     pub client_policy: crate::server::ClientPolicy,
     /// The feature bitmap advertised, when the caller has one of its own.
     ///
-    /// `None` advertises [`crate::server::DEFAULT_FEATURES`], which is what upstream's
+    /// `None` advertises [`crate::server::DEFAULT_FEATURES`], which is what the protocol's
     /// build starts from. A bit decides what a client believes the receiver can do: bit 42
     /// is the one that allows HEVC video, bits 4 and 5 are HLS and slideshow, and bit 27
-    /// picks the pairing protocol. Upstream's `-h265` is this bitmap with bit 42 set, and
+    /// picks the pairing protocol. The protocol's `-h265` is this bitmap with bit 42 set, and
     /// `-hls` is bit 4.
     pub features: Option<u64>,
     /// The display a client is offered in `GET /info`.
     ///
-    /// Upstream's `-s wxh@r`, `-fps` and `-o` together. A client reads the size, the
+    /// The protocol's `-s wxh@r`, `-fps` and `-o` together. A client reads the size, the
     /// refresh interval and the frame cap from there and sends a mirror stream that
     /// matches, so this is how a receiver asks for a smaller picture or a lower frame
     /// rate without touching the stream afterwards.
@@ -403,32 +402,32 @@ pub struct Config {
     pub on_pin: Option<PinCallback>,
     /// What to do with artwork a client sends, given its content type.
     ///
-    /// Upstream's `-ca`: the bytes are a JPEG or PNG the program may write or show. The
+    /// The protocol's `-ca`: the bytes are a JPEG or PNG the program may write or show. The
     /// library cannot write a file, so this is the callback that lets a program do it.
     pub on_artwork: Option<ArtworkCallback>,
     /// What to do with the metadata listing a client sends.
     ///
-    /// Upstream's `-md`: the bytes are a DMAP listing, which [`crate::media::dmap::text`]
+    /// The protocol's `-md`: the bytes are a DMAP listing, which [`crate::media::dmap::text`]
     /// turns into the lines that file holds.
     pub on_metadata: Option<MetadataCallback>,
     /// What to do with the remote-control identifiers a request carries.
     ///
-    /// Upstream's `-dacp`: a program can write them where a remote control expects to find
+    /// The protocol's `-dacp`: a program can write them where a remote control expects to find
     /// them. They authorize nothing; they name a connection.
     pub on_remote_control: Option<RemoteControlCallback>,
     /// Whether the client's streaming reports are written to the log.
     ///
-    /// Upstream's `-FPSdata`. A report is a binary plist a mirroring client sends once a
+    /// The protocol's `-FPSdata`. A report is a binary plist a mirroring client sends once a
     /// second; it says how the client itself thinks the stream is going, which is the one
     /// view of performance this receiver cannot measure.
     pub log_streaming_reports: bool,
     /// How a client's slider position becomes a gain.
     ///
-    /// Upstream's `-taper` and `-db`. The default is the flat `-30..0` decibel mapping.
+    /// The protocol's `-taper` and `-db`. The default is the flat `-30..0` decibel mapping.
     pub volume_curve: crate::VolumeCurve,
     /// The volume a session starts at.
     ///
-    /// Upstream's `-vol`. The renderer is told once, before any client connects, so a
+    /// The protocol's `-vol`. The renderer is told once, before any client connects, so a
     /// stream opens at this level rather than at full volume. A renderer that cannot take
     /// it reports the refusal and the receiver goes on.
     pub initial_volume: crate::Volume,
@@ -635,7 +634,7 @@ impl ClockProbe {
         else {
             return;
         };
-        // The audio side is taken as the reference: samples over a known rate is a time.
+        // The audio side is the example: samples over a known rate is a time.
         // The arrival difference is what a shared clock has to reproduce.
         let observed = (video_arrival as i64 - audio_arrival as i64) as f64 / 1e9;
         let audio_seconds = audio as f64 / 44_100.0;
@@ -834,7 +833,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     if let Err(error) = config.renderer.set_volume(crate::Volume::new(initial_gain)) {
         log::warn!("rust-airplay: the renderer would not take the initial volume: {error}");
     }
-    // Upstream validates the same range when it parses `-al` (`uxplay.cpp:1954-1966`).
+    // The protocol validates the same range when it parses `-al`.
     let audio_delay_micros = u32::try_from(config.audio_latency.as_micros())
         .ok()
         .filter(|micros| *micros <= crate::control::MAX_AUDIO_DELAY_MICROS)
@@ -984,7 +983,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let audio_stop = stopping.clone();
     let (media_key, media_ready) = tokio::sync::oneshot::channel::<([u8; 16], [u8; 16])>();
     // What the client says it is sending, as `(coding, samples per frame)`. The SETUP that
-    // names an audio stream carries it (`raop_handlers.h:995-1030`), and it can arrive a
+    // names an audio stream carries it, and it can arrive a
     // moment after the SETUP that carries the key, so the audio task waits for it briefly.
     let declared_audio: Arc<Mutex<Option<(AudioCodec, u16)>>> = Arc::new(Mutex::new(None));
     let media_key = Arc::new(Mutex::new(Some(media_key)));
@@ -1001,7 +1000,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // Where the clock exchange goes: the timing port a client named in its `SETUP`,
     // at the address its control connection came from. The receiver starts that
     // exchange, so a session that never learns this never ticks
-    // (`raop_ntp.c:614-618`).
+    //.
     let (timing_target, timing_ready) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
     let timing_target = Arc::new(Mutex::new(Some(timing_target)));
     // The mirror stream is keyed by the connection identifier a client sends in its
@@ -1040,8 +1039,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     return;
                 };
                 // A client that names its coding gets that coding; one that never does
-                // falls back to the configured default after a short wait. Upstream starts
-                // audio from the same declaration (`raop_handlers.h:995-1034`), so the wait
+                // falls back to the configured default after a short wait. The protocol starts
+                // audio from the same declaration, so the wait
                 // is the interval between two SETUP requests rather than a guess.
                 let waiting = std::time::Instant::now();
                 let declared = loop {
@@ -1120,7 +1119,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     })
                 });
                 // The clock exchange runs beside the audio, on its own socket: the
-                // receiver is the one that starts it, and upstream keeps it going
+                // receiver is the one that starts it, and the protocol keeps it going
                 // for as long as the session does.
                 let timing_sockets = Arc::clone(&audio_sockets);
                 let timing_stop = audio_stop.clone();
@@ -1136,8 +1135,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     let mut stop = timing_stop;
                     loop {
                         // `build_request` takes Unix nanoseconds and puts the NTP form
-                        // of them where upstream puts the send time
-                        // (`raop_ntp.c:615-616`).
+                        // of them where the protocol puts the send time
+                        //.
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|since| since.as_nanos() as u64)
@@ -1682,8 +1681,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
                         received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         received_bytes
                             .fetch_add(bytes.len() as u64, std::sync::atomic::Ordering::Relaxed);
-                        // Upstream's `-FPSdata` prints the client's streaming reports, which
-                        // are binary plists sent once a second (`raop_rtp_mirror.c:800-824`).
+                        // The protocol's `-FPSdata` prints the client's streaming reports, which
+                        // are binary plists sent once a second.
                         if log_reports
                             && matches!(header.kind, crate::media::mirror::MirrorKind::StreamingReport)
                         {
@@ -1697,8 +1696,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     frames += 1;
                     // A paused client is not a quiet one: the picture on screen is the one
                     // it stopped on, and the frames queued behind it are from a stream
-                    // that is not advancing. Upstream calls its renderer's pause here
-                    // (`raop_rtp_mirror.c:580-586`); dropping the queue is what this
+                    // that is not advancing. The protocol calls its renderer's pause here
+                    //; dropping the queue is what this
                     // crate can do without asking a backend to freeze a window.
                     if info.paused != was_paused {
                         was_paused = info.paused;
@@ -1936,7 +1935,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     // The clock exchange needs the address the client's control
                     // connection came from, at the port its `SETUP` named. A client
                     // that names no port is the AirPlay 2 "Remote Control" protocol
-                    // upstream does not serve (`raop_handlers.h:902-907`), and one
+                    // the protocol does not serve, and one
                     // whose request had no transport at all cannot be reached.
                     match (request.client_address, request.client_timing_port) {
                         (Some(address), Some(port)) => {
@@ -2064,7 +2063,7 @@ mod tests {
 
     #[test]
     fn a_streaming_report_is_written_out_as_xml() {
-        // Upstream prints these as XML when `-FPSdata` is on (`raop_rtp_mirror.c:816-821`);
+        // The protocol prints these as XML when `-FPSdata` is on;
         // the point is that a person can read what the client says about its own stream.
         let mut report = plist::Dictionary::new();
         report.insert("fps".to_owned(), plist::Value::from(30u64));

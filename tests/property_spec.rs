@@ -225,9 +225,9 @@ fn the_head_limit_is_inclusive() {
     ));
 }
 
-/// The limits the wire layer applies by default are the upstream header bounds.
+/// The limits the wire layer applies by default are the protocol header bounds.
 #[test]
-fn default_limits_match_upstream_header_bounds() {
+fn default_limits_match_header_bounds() {
     assert_eq!(DEFAULT_MAX_HEAD, 64 * 1024);
     assert_eq!(DEFAULT_MAX_FIELDS, 20);
     assert_eq!(DEFAULT_MAX_FIELD_LEN, 64);

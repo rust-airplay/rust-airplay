@@ -114,7 +114,7 @@ fn round_trips_binary_and_xml() {
 }
 
 #[test]
-fn reads_the_typed_values_upstream_requests_use() {
+fn reads_the_typed_values_requests_use() {
     let plist = Plist::from_value(sample());
     assert_eq!(plist.get_string("type").unwrap(), "101");
     assert_eq!(plist.get_unsigned("timingPort").unwrap(), 7011);

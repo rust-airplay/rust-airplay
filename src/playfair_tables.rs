@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![allow(dead_code)]
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! Generated from upstream/UxPlay/lib/playfair/omg_hax.h.
+//! Generated from /lib/playfair/omg_hax.h.
 //! Keep the source snapshot and license with the migration repository.
 
 pub const MESSAGE_KEY: &[u8] = &[

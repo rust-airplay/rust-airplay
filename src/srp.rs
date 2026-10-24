@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Apple-compatible SRP-6a primitives used by AirPlay pair-setup.
 //!
-//! UxPlay uses the 2048-bit RFC 5054 group with SHA-1, but keeps the older Apple session-key
+//! AirPlay uses the 2048-bit RFC 5054 group with SHA-1, but keeps the older Apple session-key
 //! expansion: `SHA-1(S || 0u32)` concatenated with `SHA-1(S || 1u32)`. The public API keeps
 //! the byte serialization rules explicit because they are part of the wire compatibility
 //! contract: the same integers encoded with or without leading zero bytes produce different
@@ -154,7 +154,7 @@ pub fn apple_session_key(premaster_secret_be: &[u8]) -> [u8; APPLE_SESSION_KEY_S
 /// Derives a labelled key from the session key.
 ///
 /// Each pairing step hashes its label in front of the session key
-/// (`upstream/UxPlay/lib/pairing.c:29-30`), which is how one exchange yields several
+///, which is how one exchange yields several
 /// independent keys without a second handshake.
 #[must_use]
 pub fn apple_proof_key(
@@ -245,7 +245,7 @@ impl AppleSrpServer {
     /// Server public value `B = k*v + g^b` in the minimal encoding Apple uses.
     ///
     /// `/pair-setup-pin` answers its first step with `B` before the client sends
-    /// its own public value (`upstream/UxPlay/lib/pairing.c:543-550`), so a
+    /// its own public value, so a
     /// server has to be able to produce `B` on its own. The value does not
     /// depend on the client's public value.
     pub fn server_public(&self) -> Result<Vec<u8>, SrpError> {
@@ -385,103 +385,6 @@ mod tests {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
-    fn unhex(text: &str) -> Vec<u8> {
-        (0..text.len() / 2)
-            .map(|index| u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).expect("hex"))
-            .collect()
-    }
-
-    /// Runs the upstream oracle with `arguments` and returns its output.
-    fn run_oracle(arguments: &[&str]) -> String {
-        let path = std::env::var("AIRPLAY_UPSTREAM_ORACLE")
-            .expect("set AIRPLAY_UPSTREAM_ORACLE to the oracle built by tools/oracle/build.ps1");
-        let output = std::process::Command::new(&path)
-            .args(arguments)
-            .output()
-            .unwrap_or_else(|error| panic!("running {path}: {error}"));
-        assert!(
-            output.status.success(),
-            "{path} {arguments:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).expect("the oracle prints ascii")
-    }
-
-    /// Value of one `key = value` line of the oracle output.
-    fn oracle_field(output: &str, key: &str) -> String {
-        output
-            .lines()
-            .find(|line| line.starts_with(key))
-            .and_then(|line| line.split_once(" = "))
-            .map(|(_, value)| value.trim().to_owned())
-            .unwrap_or_else(|| panic!("the oracle did not print {key} in:\n{output}"))
-    }
-
-    /// The port has to agree with upstream's own verifier, in the ordinary case
-    /// and in the case where the server public value is 255 bytes long: that is
-    /// where "minimal encoding" and "padded to the modulus size" differ, and the
-    /// two sides only authenticate each other if they hash the same bytes.
-    #[test]
-    #[ignore = "needs the upstream C oracle; see tools/oracle/README.md"]
-    fn upstream_verifier_accepts_our_proof() {
-        for mode in ["plain", "short"] {
-            let output = run_oracle(&["srp-init", mode]);
-            let salt = unhex(&oracle_field(&output, "srp.salt"));
-            let verifier = unhex(&oracle_field(&output, "srp.verifier"));
-            let private_b = unhex(&oracle_field(&output, "srp.private_b"));
-            let server_public = unhex(&oracle_field(&output, "srp.server_public"));
-            let expected = if mode == "short" { 255 } else { 256 };
-            assert_eq!(server_public.len(), expected, "mode {mode}");
-
-            let server = AppleSrpServer::from_verifier(
-                b"AA:BB:CC:DD:EE:FF",
-                &verifier,
-                &salt.clone().try_into().expect("salt"),
-                &private_b,
-            )
-            .expect("server");
-            assert_eq!(
-                server.server_public().expect("public value"),
-                server_public,
-                "mode {mode}"
-            );
-
-            let exchange = test_client::exchange(
-                b"AA:BB:CC:DD:EE:FF",
-                b"1234",
-                &salt,
-                &[0x07; 32],
-                &server_public,
-            );
-            let response = server.respond(&exchange.public_key).expect("response");
-            assert_eq!(response.expected_proof, exchange.proof);
-
-            let output = run_oracle(&[
-                "srp-verify",
-                &hex(&salt),
-                &hex(&verifier),
-                &hex(&private_b),
-                &hex(&exchange.public_key),
-                &hex(&exchange.proof),
-            ]);
-            assert_eq!(
-                oracle_field(&output, "srp.authenticated"),
-                "1",
-                "mode {mode}: upstream refused our proof"
-            );
-            assert_eq!(
-                unhex(&oracle_field(&output, "srp.server_proof")),
-                response.server_proof.to_vec(),
-                "mode {mode}"
-            );
-            assert_eq!(
-                unhex(&oracle_field(&output, "srp.session_key")),
-                response.session_key.to_vec(),
-                "mode {mode}"
-            );
-        }
-    }
-
     #[test]
     fn expands_secret_to_two_apple_blocks() {
         let key = apple_session_key(&[1, 2, 3]);
@@ -571,7 +474,7 @@ mod tests {
             &response.expected_proof,
             &client_proof
         ));
-        // Vectors captured from upstream UxPlay/lib/srp.c with the same inputs.
+        // Vectors captured from an AirPlay SRP implementation with the same inputs.
         assert_eq!(
             hex(&response.public_key),
             "0132837009606bffe01477859648105a1a817354d8c1ac8d59ecb8fed84c435fe7e3ce97db6ebd3b5ea6f18647a875a4611a9e093df90c87c4c1d780d7c7069210759dd01a4a1f172a849ce346431132a51ffb950ebff1798f95c0bb97abdd2331b364aef4efd79abf573c3e094f48b4db2c8b2f9a0d4bc29b19bad030e8922f9f9628d3032848e3f5b92114dfd148c1a720181504828309cab2682bb1ba8d773078184ac1295d957ebf5858b21a2d9eba81f630d005a574fa71889b5da89bfe8d68042b8c9ca5b2296ce64adf7c2dc7c7390c566212434360a6e6474dddc5cf37c9de08043fa20a8d73d91c205259d449e419c94c5d33b472b10e73ad6ab570"

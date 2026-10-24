@@ -4,7 +4,7 @@
 value the program injects: an implementation of [`Renderer`][renderer]. This document is the
 contract, in the order a backend meets it.
 
-`rust-airplay-gstream` is the reference implementation. Read it beside this document.
+`rust-airplay-gstream` is the GStreamer implementation. Read it beside this document.
 
 ## The trait
 
@@ -24,7 +24,7 @@ two receivers; nothing in the trait assumes they are the same object.
 
 Every method takes `&self`. The receiver holds the renderer while its media threads hold the
 streams, and `open_audio` can be called again after a client reconnects. A backend keeps
-mutable state behind its own lock; the reference implementation keeps the playing stream's
+mutable state behind its own lock; the GStreamer backend keeps the playing stream's
 volume element in a `Mutex<Option<WeakRef<Element>>>`.
 
 ## Threading
@@ -54,7 +54,7 @@ volume element in a `Mutex<Option<WeakRef<Element>>>`.
 
 A coded frame is one `push`. Unlike video, an audio frame has no start code: the only
 boundary is the push itself, so a backend must decode per buffer rather than by scanning
-bytes. That is why the reference backend uses `appsrc` for audio and a byte stream for video.
+bytes. That is why the GStreamer backend uses `appsrc` for audio and a byte stream for video.
 
 ## Frames
 
@@ -237,7 +237,7 @@ backend's behaviour can be compared with a known-good consumer.
 - `NullRenderer` proves the protocol path.
 - A recording backend proves the frames: write them and open the result in a normal player.
   A video file of Annex-B units is a valid `.h264` or `.h265` stream; an audio file of coded
-  frames needs a container and the coding's configuration, which the tests in the reference
+  frames needs a container and the coding's configuration, which the tests in the GStreamer
   backend show how to build.
 - Runtime tests belong behind an `#[ignore]` and a guard that skips when the environment has
   no media stack; `cargo test -- --ignored` runs them on a machine that has one.

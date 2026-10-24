@@ -59,7 +59,7 @@ fn lifecycle_is_observable_and_never_rejects_a_route() {
     assert_header(&options, "Audio-Jack-Status", AUDIO_JACK_STATUS);
 
     // SETUP works on a fresh connection: no ANNOUNCE is required, because
-    // upstream has no ANNOUNCE route at all. The control layer hands this
+    // the protocol has no ANNOUNCE route at all. The control layer hands this
     // route to a handler, so the session below needs one that serves it.
     let setup = setup_with_handler(
         &mut session,
@@ -108,7 +108,7 @@ fn announce_is_an_extension_that_only_marks_the_state() {
 }
 
 #[test]
-fn ignores_unusable_and_missing_cseq_like_upstream() {
+fn ignores_unusable_and_missing_cseq() {
     let mut session = ControlSession::new();
     // raop.c:247-250: a CSeq that is not a non-negative integer is dropped.
     assert_eq!(
@@ -176,7 +176,7 @@ fn binds_the_connection_to_one_apple_session_id() {
     assert_eq!(
         first.header("Session"),
         None,
-        "upstream never sends a Session header"
+        "the protocol never sends a Session header"
     );
     respond(
         &mut session,
@@ -196,7 +196,7 @@ fn binds_the_connection_to_one_apple_session_id() {
 }
 
 #[test]
-fn echoes_the_request_protocol_and_frames_the_body_like_upstream() {
+fn echoes_the_request_protocol_and_frames_the_body() {
     let mut session = ControlSession::new();
     let response = respond(&mut session, &request("OPTIONS", "*", Some(7), "", &[]));
     let bytes = response.to_bytes();
@@ -231,7 +231,7 @@ fn echoes_the_request_protocol_and_frames_the_body_like_upstream() {
 }
 
 #[test]
-fn answers_501_for_unported_routes_and_unknown_methods() {
+fn answers_501_for_delegated_routes_and_unknown_methods() {
     let mut session = ControlSession::new();
     for (method, target, version) in [
         ("POST", "/feedback", "RTSP/1.0"),
@@ -245,12 +245,12 @@ fn answers_501_for_unported_routes_and_unknown_methods() {
         assert_header(&response, "Server", SERVER_HEADER_VALUE);
         assert_header(&response, "CSeq", "1");
     }
-    // A route that is not implemented must not advance the session either.
+    // A route that no handler serves must not advance the session either.
     assert_eq!(session.state(), ControlState::New);
 }
 
 #[test]
-fn answers_upstream_default_for_unmatched_targets() {
+fn answers_the_default_for_unmatched_targets() {
     let mut session = ControlSession::new();
     let response = respond(&mut session, &request("POST", "/unknown", Some(1), "", &[]));
     assert_eq!(response.status, 200);
@@ -260,7 +260,7 @@ fn answers_upstream_default_for_unmatched_targets() {
 }
 
 #[test]
-fn maps_errors_to_upstream_status_codes() {
+fn maps_errors_to_status_codes() {
     let parse = ControlError::Parse(ParseError::Invalid("header"));
     assert_eq!(parse.status(), (400, "Bad Request"));
     let head = ControlError::HeadTooLarge {
@@ -318,7 +318,7 @@ fn rejects_oversized_and_incomplete_requests() {
 }
 
 #[test]
-fn audio_latency_follows_the_upstream_formula() {
+fn audio_latency_follows_the_formula() {
     assert_eq!(audio_latency_samples(DEFAULT_AUDIO_DELAY_MICROS), 11_025);
     assert_eq!(audio_latency_samples(0), 0);
     assert_eq!(audio_latency_samples(MAX_AUDIO_DELAY_MICROS), 441_000);

@@ -1,54 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Pairing state of a receiver and of one control connection.
 //!
-//! Upstream keeps the receiver-wide facts in `raop_t` — the PIN, whether a PIN
-//! is in use, and the long-term Ed25519 identity of `pairing.c` — and the
-//! exchange of one client in `raop_conn_t::session`, next to that connection's
-//! FairPlay session (`upstream/UxPlay/lib/raop.c:145-151`, `:627-628`).
-//! [`PairingState`] is the shared half and [`PairingSession`] the per-connection
-//! half.
+//! [`PairingState`] holds the facts a receiver keeps across connections: the PIN, whether a
+//! PIN is in use, and the long-term Ed25519 identity. [`PairingSession`] holds the exchange of
+//! one client, next to that connection's FairPlay session.
 //!
-//! # Documented differences from upstream
+//! The rules below are deliberate, and each has a test:
 //!
-//! Each of these is deliberate, and each has a test:
-//!
-//! * A `/pair-setup-pin` step 3 is refused unless step 2 verified the client
-//!   proof. Upstream derives the step 3 keys from the SRP session key, which is
-//!   still the all-zero buffer of a fresh context until the proof is checked
-//!   (`upstream/UxPlay/lib/pairing.c:513`, `:587`, `:603`), so two requests
-//!   without any PIN let a peer install its own key on the receiver.
-//! * `/pair-setup-pin` without a usable PIN is refused. Upstream instead uses
-//!   the implicit PIN `"0000"` whenever no PIN is configured
-//!   (`upstream/UxPlay/lib/raop.c:627`, `raop_handlers.h:329-332`), which makes
-//!   the SRP exchange authenticate nothing.
-//! * A one-time PIN is consumed only when pairing succeeds, a repeated
-//!   `/pair-pin-start` keeps the PIN that is already pending, and
-//!   [`MAX_PIN_FAILURES`] wrong proofs drop it. Upstream clears the PIN on the
-//!   first step and regenerates it on every request (`raop_handlers.h:258-267`,
-//!   `:329-332`), so any peer can invalidate the PIN a user is reading and a
-//!   fixed PIN can be guessed without limit. The cost of consuming late is that
-//!   two peers who both know the PIN can each complete a pairing until the first
-//!   one succeeds; the failure bound keeps that window small.
-//! * A value whose length upstream does not check is validated before it is
-//!   used (`raop_handlers.h:366`, `:408-409`), and the steps whose missing state
-//!   upstream dereferences as a null pointer (`pairing.c:560`, `:603`) answer
-//!   `470` instead.
-//! * A `/pair-verify` step 1 that the injected registration predicate refuses
-//!   stays refused for the rest of the connection, and only a `/pair-setup-pin`
-//!   that proves the PIN lifts it. Upstream stops consulting the list once the
-//!   connection is in its setup state (`raop_handlers.h:470-477`), so a client it
-//!   has just turned away only has to ask a second time, which would make an
-//!   injected list useless as access control.
-//! * A key exchange key that yields an all-zero shared secret is refused. A
-//!   low-order point would let the peer derive the keystream without holding a
-//!   private key, and upstream's OpenSSL derive fails where the port has to
-//!   check for itself (`crypto.c:245-265`).
-//! * One connection starts one `/pair-verify` key exchange, and one connection
-//!   opens at most [`MAX_SETUP_PIN_ATTEMPTS`] SRP contexts. Upstream accepts a
-//!   repeat of either (`pairing.c:162-180` only refuses a finished session, and
-//!   nothing bounds the modular exponentiation of a setup step), but a repeat
-//!   either replaces the keys the connection already agreed on or spends work
-//!   for an unauthenticated peer.
+//! * A `/pair-setup-pin` step 3 is refused unless step 2 verified the client proof. The step 3
+//!   keys derive from the SRP session key, and that key is all zeroes until the proof is
+//!   checked; two requests without any PIN would otherwise let a peer install its own key on
+//!   the receiver.
+//! * `/pair-setup-pin` without a usable PIN is refused. An implicit PIN would make the SRP
+//!   exchange authenticate nothing.
+//! * A one-time PIN is consumed only when pairing succeeds, a repeated `/pair-pin-start` keeps
+//!   the PIN already pending, and [`MAX_PIN_FAILURES`] wrong proofs drop it. The cost of
+//!   consuming late is that two peers who both know the PIN can each complete a pairing until
+//!   the first one succeeds; the failure bound keeps that window small.
+//! * Values whose lengths the protocol does not require are validated before use, and a step
+//!   whose state is missing answers `470` instead of dereferencing it.
+//! * A `/pair-verify` step 1 that the injected registration predicate refuses stays refused for
+//!   the rest of the connection, and only a `/pair-setup-pin` that proves the PIN lifts it.
+//! * A key exchange that yields an all-zero shared secret is refused: a low-order point would
+//!   let a peer derive the keystream without holding a private key.
+//! * One connection starts one `/pair-verify` key exchange, and one connection opens at most
+//!   [`MAX_SETUP_PIN_ATTEMPTS`] SRP contexts, so an unauthenticated peer cannot spend the
+//!   receiver's modular exponentiation without limit.
 
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -65,7 +42,7 @@ use crate::srp::{
     constant_time_proof_eq,
 };
 
-/// Longest client user name upstream accepts (`upstream/UxPlay/lib/pairing.h:24`).
+/// Longest client user name the protocol accepts.
 const MAX_USERNAME: usize = 24;
 
 /// Largest SRP public value a client may send: one 2048-bit block.
@@ -81,7 +58,7 @@ const MAX_PIN_ATTEMPTS: usize = 8;
 ///
 /// Every `/pair-setup-pin` step 1 computes a fresh server public value, so an
 /// unauthenticated peer could otherwise spend a modular exponentiation per
-/// request for as long as it holds a connection slot. Upstream has no such
+/// request for as long as it holds a connection slot. The protocol has no such
 /// bound; the port bounds the work per connection and relies on the connection
 /// limit and the idle deadline for the rest. The value is one above
 /// [`MAX_PIN_FAILURES`] so that the per-connection bound never hides the
@@ -91,7 +68,7 @@ const MAX_SETUP_PIN_ATTEMPTS: usize = MAX_PIN_FAILURES as usize + 1;
 
 /// Wrong proofs a receiver tolerates before it drops a one-time PIN.
 ///
-/// Upstream counts nothing, so a fixed PIN can be guessed online until it is
+/// The protocol counts nothing, so a fixed PIN can be guessed online until it is
 /// found; this bound is a port decision, and it applies to the shared state so
 /// that opening a new connection does not reset it.
 pub const MAX_PIN_FAILURES: u32 = 5;
@@ -99,8 +76,8 @@ pub const MAX_PIN_FAILURES: u32 = 5;
 /// Refused password digests a receiver tolerates before it stops answering
 /// challenges.
 ///
-/// Upstream keeps counting and, in its random-password mode, hands out a new
-/// password once the count is reached (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:664-669`);
+/// The protocol keeps counting and, in its random-password mode, hands out a new
+/// password once the count is reached;
 /// a configured password cannot be rotated like that, so the port stops
 /// accepting new attempts on a connection that keeps guessing.
 pub const MAX_PASSWORD_FAILURES: u32 = 5;
@@ -150,7 +127,7 @@ pub enum PinMode {
     /// A PIN `/pair-pin-start` generates, valid until one pairing succeeds.
     OneTime,
     /// A PIN the caller chose. Only the low four digits are used, which is how
-    /// upstream stores a configured PIN (`upstream/UxPlay/lib/uxplay.cpp:1654`).
+    /// the protocol stores a configured PIN.
     Fixed(u16),
 }
 
@@ -163,7 +140,6 @@ pub type ClientRegisteredCheck = Box<dyn Fn(&[u8; ED25519_KEY_SIZE]) -> bool + S
 /// A caller creates one value, shares it with the handler factory and keeps it
 /// for the lifetime of the receiver: the long-term identity is what a client
 /// caches, so a receiver that changes it has to be paired again
-/// (`upstream/UxPlay/lib/raop.c:659-674`).
 pub struct PairingState {
     identity_seed: [u8; ED25519_KEY_SIZE],
     identity_public: [u8; ED25519_KEY_SIZE],
@@ -204,8 +180,8 @@ impl PairingState {
 
     /// Sets the password a client has to authenticate with before `SETUP`.
     ///
-    /// Upstream gets the same value from its `-pw` option and asks for it with
-    /// an RFC 2617 digest challenge (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:649-748`).
+    /// The protocol gets the same value from its `-pw` option and asks for it with
+    /// an RFC 2617 digest challenge.
     /// A receiver without a password answers `SETUP` without a challenge, which
     /// is what an AirPlay 1 client expects when nothing is protected.
     pub fn with_password(mut self, password: impl Into<Vec<u8>>) -> Self {
@@ -221,7 +197,7 @@ impl PairingState {
     /// Failures a password may collect before this receiver stops answering
     /// challenges for new attempts.
     ///
-    /// Upstream counts the same events; the bound and the shared counter are the
+    /// The protocol counts the same events; the bound and the shared counter are the
     /// port's own, so guessing a password costs attempts across all connections.
     pub fn password_failures(&self) -> u32 {
         *self.guard(&self.password_failures)
@@ -281,9 +257,9 @@ impl PairingState {
     }
 
     /// Adds the predicate that decides whether a client may start
-    /// `/pair-verify` on a connection with no setup of its own.    ///
-    /// Upstream asks its application the same question and treats a missing list
-    /// as "registered" (`upstream/UxPlay/lib/raop_handlers.h:504-516`), so a
+    /// `/pair-verify` on a connection with no setup of its own. ///
+    /// The protocol asks its application the same question and treats a missing list
+    /// as "registered", so a
     /// receiver without a predicate accepts every client; injecting one is how a
     /// caller opts into an access-control list. The predicate answers for one
     /// client public key and must not block.
@@ -331,8 +307,7 @@ impl PairingState {
         mutex.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Draws a PIN in `1..=9999`, the range upstream's `random_pin` produces
-    /// (`upstream/UxPlay/lib/pairing.c:484-498`).
+    /// Draws a PIN in `1..=9999`, the range the protocol's `random_pin` produces
     fn random_pin(&self) -> Result<u16, PairingError> {
         let mut random = self.guard(&self.random);
         for _ in 0..MAX_PIN_ATTEMPTS {
@@ -343,7 +318,7 @@ impl PairingState {
                 return Ok(pin);
             }
         }
-        // Upstream retries forever when its random source fails; a stated error
+        // The protocol retries forever when its random source fails; a stated error
         // is the difference between a stuck handler and a bounded one.
         Err(PairingError::Random)
     }
@@ -355,7 +330,7 @@ impl PairingState {
             PinMode::Fixed(pin) => Ok(digits(pin)),
             PinMode::OneTime => match *self.guard(&self.pending_pin) {
                 Some(pin) => Ok(digits(pin)),
-                // Upstream would fall back to `"0000"` here; requiring a
+                // The protocol would fall back to `"0000"` here; requiring a
                 // generated PIN is what makes the exchange authenticate.
                 None => Err(PairingError::PinUnavailable),
             },
@@ -370,7 +345,7 @@ impl PairingState {
             PinMode::OneTime => {
                 let mut pending = self.guard(&self.pending_pin);
                 let pin = match *pending {
-                    // Keep the PIN a user is already looking at; upstream
+                    // Keep the PIN a user is already looking at; the protocol
                     // regenerates it on every request.
                     Some(pin) => pin,
                     None => {
@@ -446,8 +421,8 @@ fn hex(bytes: &[u8]) -> String {
 /// Why a pairing request was refused.
 ///
 /// The control service answers every variant with `470 Client Authentication
-/// Failure` and no body, the status upstream uses for a failed pairing step
-/// (`upstream/UxPlay/lib/raop_handlers.h:431-432`). No variant carries key
+/// Failure` and no body, the status the protocol uses for a failed pairing step
+/// No variant carries key
 /// material, so an error can be logged.
 #[derive(Debug)]
 pub enum PairingError {
@@ -472,7 +447,7 @@ pub enum PairingError {
 }
 
 impl PairingError {
-    /// Status code upstream answers a failed pairing step with.
+    /// Status code the protocol answers a failed pairing step with.
     pub fn status(&self) -> u16 {
         470
     }
@@ -507,9 +482,9 @@ impl std::error::Error for PairingError {}
 
 /// What the control service answers a pairing request with.
 pub(crate) enum PairingReply {
-    /// Add nothing to the default `200 OK`: the answer upstream gives when a
+    /// Add nothing to the default `200 OK`: the answer the protocol gives when a
     /// step has nothing to say, for example when a client should fall back to
-    /// the legacy setup (`upstream/UxPlay/lib/raop_handlers.h:319-324`, `:447-450`,
+    /// the legacy setup (, `:447-450`,
     /// `:474-476`).
     Silence,
     /// Binary property list body.
@@ -517,7 +492,6 @@ pub(crate) enum PairingReply {
     /// Opaque body with `Content-Type: application/octet-stream`.
     Octets(Vec<u8>),
     /// `200 OK` with nothing added, after which the connection is closed
-    /// (`upstream/UxPlay/lib/raop_handlers.h:533-537`).
     Disconnect,
 }
 
@@ -532,7 +506,6 @@ pub enum SessionAuth {
     /// The connection authenticated nothing.
     None,
     /// `/pair-setup` completed; that flow authenticates neither side
-    /// (`upstream/UxPlay/lib/raop_handlers.h:440-460`).
     LegacySetup,
     /// `/pair-setup-pin` step 3 installed a client key after the PIN proof.
     PinVerified,
@@ -557,7 +530,7 @@ pub(crate) struct SessionKeys {
 }
 
 /// Lifecycle of one connection's pairing exchange, the port of the status values
-/// of `upstream/UxPlay/lib/pairing.c:148-159`.
+/// of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Status {
     /// Nothing is set up on this connection.
@@ -571,14 +544,14 @@ enum Status {
 }
 
 impl Status {
-    /// Whether `/pair-verify` may start, the inverse of upstream's
+    /// Whether `/pair-verify` may start, the inverse of the protocol's
     /// `pairing_session_check_handshake_status`.
     fn allows_handshake(self) -> bool {
         matches!(self, Self::Setup | Self::Handshake)
     }
 }
 
-/// Pairing exchange of one connection, upstream's `raop_conn_t::session`.
+/// Pairing exchange of one connection, the protocol's `raop_conn_t::session`.
 ///
 /// Temporary material — the SRP context, the session key of a verified proof,
 /// the X25519 key pair and the key the client presented — belongs to the client
@@ -617,7 +590,7 @@ impl PairingSession {
 
     /// `/pair-pin-start`: `raop_handler_pairpinstart`.
     ///
-    /// Upstream adds nothing to the reply (`upstream/UxPlay/lib/raop_handlers.h:270-273`);
+    /// The protocol adds nothing to the reply;
     /// the PIN reaches the user through [`PairingState::pending_pin`], which
     /// keeps the display out of the handler and out of any held lock.
     pub(crate) fn pin_start(&mut self) -> Result<PairingReply, PairingError> {
@@ -648,7 +621,7 @@ impl PairingSession {
     ///
     /// The material is handed out at most once, and only after the second
     /// `/pair-verify` step verified the client's signature
-    /// (`upstream/UxPlay/lib/pairing.c:108-119` hands it out for any connection
+    /// ( hands it out for any connection
     /// that started a handshake, which this crate deliberately narrows). A caller
     /// that gets `None` has no verified session on this connection and must not
     /// derive stream keys.
@@ -666,9 +639,9 @@ impl PairingSession {
     /// `/pair-setup-pin`: `raop_handler_pairsetup_pin`.
     ///
     /// The three steps are told apart by the keys they carry, in the order
-    /// upstream tests them (`upstream/UxPlay/lib/raop_handlers.h:310-430`).
+    /// the protocol tests them.
     pub(crate) fn setup_pin(&mut self, body: &[u8]) -> Result<PairingReply, PairingError> {
-        // Upstream parses with `plist_from_bin` (`raop_handlers.h:302`), so an
+        // The protocol parses with `plist_from_bin`, so an
         // XML property list is refused even though the plist layer could read it.
         if !body.starts_with(b"bplist00") {
             return Err(PairingError::NotPlist);
@@ -694,9 +667,9 @@ impl PairingSession {
 
     /// First step: try a PIN, answer with the SRP public value and salt.
     fn setup_pin_one(&mut self, method: &str, user: &str) -> Result<PairingReply, PairingError> {
-        // Upstream compares with `strncmp(method, "pin", strlen(method))`, so any
+        // The protocol compares with `strncmp(method, "pin", strlen(method))`, so any
         // prefix of "pin" is accepted and anything else falls through to the
-        // default `200 OK` with no body (`raop_handlers.h:319-324`).
+        // default `200 OK` with no body.
         if !"pin".starts_with(method) {
             return Ok(PairingReply::Silence);
         }
@@ -718,7 +691,7 @@ impl PairingSession {
         let server =
             AppleSrpServer::new(user, &pin, &salt, &private_b).map_err(PairingError::Srp)?;
         // The client's public value is not known yet, so the answer needs the
-        // server public value on its own (`pairing.c:543-550`).
+        // server public value on its own.
         let public = server.server_public().map_err(PairingError::Srp)?;
         self.srp = Some(server);
         self.session_key = None;
@@ -752,7 +725,7 @@ impl PairingSession {
                 return Err(PairingError::Srp(error));
             }
         };
-        // The SRP context is spent either way: upstream keeps its own until the
+        // The SRP context is spent either way: the protocol keeps its own until the
         // next step and then frees it, so a retry of this step crashes it.
         self.srp = None;
         if !constant_time_proof_eq(&response.expected_proof, proof) {
@@ -772,7 +745,7 @@ impl PairingSession {
         epk: &[u8],
         auth_tag: &[u8],
     ) -> Result<PairingReply, PairingError> {
-        // The session key only exists once step 2 verified the proof; upstream
+        // The session key only exists once step 2 verified the proof; the protocol
         // derives the keys below from the zero-filled key of an unverified
         // context, which lets a peer skip this check entirely.
         let Some(session_key) = self.session_key else {
@@ -817,9 +790,9 @@ impl PairingSession {
 
     /// `/pair-setup`: `raop_handler_pairsetup`.
     ///
-    /// The legacy flow carries no secret: upstream ignores the content of the
+    /// The legacy flow carries no secret: the protocol ignores the content of the
     /// 32-byte body and answers with the receiver's public key
-    /// (`upstream/UxPlay/lib/raop_handlers.h:440-460`), which is why the reply
+    ///, which is why the reply
     /// must not be treated as authentication anywhere.
     pub(crate) fn setup(&mut self, body: &[u8]) -> Result<PairingReply, PairingError> {
         if body.len() != ED25519_KEY_SIZE {
@@ -835,13 +808,13 @@ impl PairingSession {
         if !self.status.allows_handshake() {
             if self.shared.pin_mode() == PinMode::Disabled {
                 // The default reply without a body is the client's cue to fall
-                // back to `/pair-setup` (`raop_handlers.h:474-476`).
+                // back to `/pair-setup`.
                 return Ok(PairingReply::Silence);
             }
             self.status = Status::Setup;
             register_check = true;
         } else if self.registration_refused {
-            // Upstream stops checking the client as soon as the connection is in
+            // The protocol stops checking the client as soon as the connection is in
             // its setup state (`:470-477`), so a client it just refused only has
             // to ask again. A refusal therefore stays for the rest of this
             // connection, which is what makes an injected registration list an
@@ -880,8 +853,8 @@ impl PairingSession {
         let client_identity = array::<ED25519_KEY_SIZE>(&body[36..68], "pair-verify client key")?;
         if register_check {
             if let Some(check) = self.shared.client_registered.as_ref() {
-                // Without a predicate upstream treats every client as registered
-                // (`raop_handlers.h:504-516`); a caller that needs the check
+                // Without a predicate the protocol treats every client as registered
+                //; a caller that needs the check
                 // injects one.
                 if !check(&client_identity) {
                     self.registration_refused = true;
@@ -918,8 +891,8 @@ impl PairingSession {
     /// Second `/pair-verify` step: verify the client's signature.
     ///
     /// A signature that does not verify is answered with the default `200 OK`
-    /// and closes the connection, which is what upstream asks its httpd to do
-    /// (`upstream/UxPlay/lib/raop_handlers.h:533-537`); that reply carries no
+    /// and closes the connection, which is what the protocol asks its httpd to do
+    ///; that reply carries no
     /// content type, unlike the successful one below it.
     fn verify_finish(&mut self, body: &[u8]) -> Result<PairingReply, PairingError> {
         if body.len() != 4 + PAIRING_SIG_SIZE {

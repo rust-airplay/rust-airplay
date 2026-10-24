@@ -58,8 +58,9 @@ subtle part: it starts where the previous packet ended, whole blocks at a time. 
 that does not fill its final block leaves the rest of that block for the next packet, and
 those bytes exist nowhere in the stream because they are the tail of a block that was
 already read past. The counter then advances by the blocks the packet's own bytes filled.
-This rule is checked against UxPlay's implementation rather than inferred, and the test that
-does it is the reason it is written down this precisely here.
+The rule is written down this precisely because a test checks it byte by byte against a known
+packet sequence, and because a version that reads the stream as an ordinary counter produces
+noise rather than an error.
 
 Frames leave the media path as Annex-B access units. A client that sends its parameter sets
 separately gets them prepended to the frame they belong to.

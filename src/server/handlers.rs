@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Route handlers for the network control service.
 //!
-//! Each handler is a port of one function in
-//! `upstream/UxPlay/lib/raop_handlers.h`. A handler contributes only the status
-//! code, reason phrase, body and headers its upstream counterpart adds: the
-//! routing decision, the `Audio-Jack-Status`/`Server`/`CSeq` envelope and the
-//! status of a route this crate has not ported yet stay in [`crate::control`].
+//! A handler contributes the status code, reason phrase, body and headers of the route it
+//! serves. The routing decision, the `Audio-Jack-Status`/`Server`/`CSeq` envelope, and the
+//! answer for a route no handler serves stay in [`crate::control`].
 
 use std::sync::Arc;
 
@@ -30,8 +28,8 @@ const MAX_SETUP_STREAMS: usize = 4;
 
 /// Ports a `SETUP` response may advertise.
 ///
-/// Upstream answers the ports it has bound by the time the request arrives
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:908`, `:935-936`, `:958`,
+/// The protocol answers the ports it has bound by the time the request arrives
+/// (, `:935-936`, `:958`,
 /// `:985`). This crate has no media or timing sockets yet, and a field it cannot
 /// honour is left out instead of being filled with a placeholder, so a client
 /// never believes it may send media somewhere nothing listens.
@@ -39,11 +37,11 @@ const MAX_SETUP_STREAMS: usize = 4;
 pub struct SetupPorts {
     /// Port of the timing service, sent as `timingPort`.
     pub timing_port: Option<u16>,
-    /// Port of the event channel, sent as `eventPort` (upstream sends `0`,
+    /// Port of the event channel, sent as `eventPort` (the protocol sends `0`,
     /// because neither audio nor mirror mode uses it).
     ///
-    /// Upstream puts this key in every `SETUP` response whether or not a client
-    /// asked for it (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:931-936`), so
+    /// The protocol puts this key in every `SETUP` response whether or not a client
+    /// asked for it, so
     /// a response that leaves it out is not the shape a client expects. `None`
     /// therefore means "not known yet" rather than "omit", and
     /// [`SetupPorts::event_port_or_zero`] is what a response uses.
@@ -57,10 +55,10 @@ pub struct SetupPorts {
 }
 
 impl SetupPorts {
-    /// The event port a response carries, which upstream always answers.
+    /// The event port a response carries, which the protocol always answers.
     ///
     /// It is `0` when the port does not exist, and that is not a placeholder: a
-    /// client reads the key's presence, and upstream's own value is `0` for both
+    /// client reads the key's presence, and the protocol's own value is `0` for both
     /// of the modes this receiver serves.
     pub fn event_port_or_zero(&self) -> u16 {
         self.event_port.unwrap_or(0)
@@ -71,22 +69,19 @@ impl SetupPorts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetupStream {
     /// Stream type: `96` is audio, `110` is mirroring
-    /// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:954-983`).
     pub kind: u16,
     /// `streamConnectionID`, which the mirror stream uses to derive its own
-    /// AES-CTR key (`raop_handlers.h:959-963`).
+    /// AES-CTR key.
     pub stream_connection_id: Option<u64>,
     /// `ct`, the compression type: `2` is ALAC and `8` is AAC-ELD
-    /// (`upstream/UxPlay@3dbf7cee:lib/raop_rtp.c:113`).
     ///
-    /// It is what says which coding a client is sending, and upstream takes its decoder
+    /// It is what says which coding a client is sending, and the protocol takes its decoder
     /// from it rather than guessing. A port that assumes one of the two is a port that is
     /// wrong for every client that uses the other, and the assumption is invisible from the
     /// audio alone: both are compressed, and a decoder handed the wrong one reports a
     /// stream it cannot read rather than the mix-up.
     pub compression_type: Option<u16>,
-    /// `spf`, samples per frame, which upstream passes to its decoder with `ct`
-    /// (`raop_handlers.h:1007-1009`).
+    /// `spf`, samples per frame, which the protocol passes to its decoder with `ct`
     pub samples_per_frame: Option<u16>,
 }
 
@@ -94,7 +89,7 @@ pub struct SetupStream {
 ///
 /// The audio key is the FairPlay-decrypted `ekey`, hashed with the connection's
 /// verified pairing secret when there is one
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:848-854`). Nothing is derived
+/// Nothing is derived
 /// from an unverified exchange: the session material of a connection is produced
 /// only after it finished `/pair-verify`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,18 +102,18 @@ pub struct SetupRequest {
     pub streams: Vec<SetupStream>,
     /// Port the client listens on for the clock exchange, from `timingPort`.
     ///
-    /// The exchange is the receiver's to start: upstream sends its first timing
+    /// The exchange is the receiver's to start: the protocol sends its first timing
     /// request as soon as `SETUP` is answered, to this crate
-    /// (`upstream/UxPlay@3dbf7cee:lib/raop_ntp.c:614-618`), and a client that never
+    ///, and a client that never
     /// receives one has no reason to send its media. `None` is a client that did
-    /// not name a port, which upstream logs as the AirPlay 2 "Remote Control"
-    /// protocol it does not serve (`raop_handlers.h:902-907`).
+    /// not name a port, which the protocol logs as the AirPlay 2 "Remote Control"
+    /// protocol it does not serve.
     pub client_timing_port: Option<u16>,
     /// Address the client's control connection came from.
     ///
     /// The clock exchange goes to [`SetupRequest::client_timing_port`] at this
     /// address, which is the only place a receiver can learn it from
-    /// (`raop_ntp.c:617-618`). `None` is a request served without a transport, as a
+    /// `None` is a request served without a transport, as a
     /// unit test serves one.
     pub client_address: Option<std::net::SocketAddr>,
     /// The whole request, as XML, when a receiver asked for it.
@@ -147,15 +142,15 @@ pub struct SetupRequest {
 
 /// What a client asked to change with `SET_PARAMETER`.
 ///
-/// Upstream hands both values straight to its media layer
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:1146-1158`); a receiver whose
+/// The protocol hands both values straight to its media layer
+///; a receiver whose
 /// media layer is a later stage reports them instead of pretending to act.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SetParameter {
     /// `volume: <value>`: the volume the client asked for, in decibels.
     ///
     /// A client states `-30` for silence and `0` for full volume, and `-144` for mute
-    /// (`uxplay.cpp:2803-2821`). It is not a fraction, and a receiver that read it as one
+    /// It is not a fraction, and a receiver that read it as one
     /// would mute every client that lowered its volume at all.
     Volume(f32),
     /// `progress: <start>/<current>/<end>`, in seconds.
@@ -175,24 +170,22 @@ pub enum SetParameter {
 /// does not copy request data around.
 pub type TraceCallback = Box<dyn FnMut(&RequestTrace<'_>) + Send>;
 
-/// Model upstream advertises when the user does not override it
-/// (`upstream/UxPlay/lib/global.h:21`).
+/// Model the protocol advertises when the user does not override it
 pub const DEFAULT_MODEL: &str = "AppleTV3,2";
 
-/// Version upstream reports as `sourceVersion` and in its `Server` header
-/// (`upstream/UxPlay/lib/global.h:22`).
+/// Version the protocol reports as `sourceVersion` and in its `Server` header
 pub const DEFAULT_SOURCE_VERSION: &str = "220.68";
 
 /// AirPlay feature bitmap a receiver advertises by default.
 ///
 /// **Bit 27 is the one that decides how a client connects**, and it is worth being exact
-/// about. `upstream/UxPlay/uxplay.cpp:2161` says what it is:
+/// about. says what it is:
 ///
 /// > bit 27 of Features determines whether the AirPlay2 client-pairing protocol will be
 /// > used (1) or not (0)
 ///
-/// UxPlay 1.74 leaves it clear (`setup_legacy_pairing = false`,
-/// `upstream/UxPlay/uxplay.cpp:164`) and advertises `0x527FFEE6`, which was read back from
+/// AirPlay leaves it clear (`setup_legacy_pairing = false`,
+///) and advertises `0x527FFEE6`, which was read back from
 /// a running receiver with `dns-sd` rather than taken from a header. With the bit set a
 /// client is told to use the older pairing protocol, and iOS does: it starts
 /// `/pair-pin-start` and `/pair-setup-pin`, and only after that has failed or timed out
@@ -200,55 +193,49 @@ pub const DEFAULT_SOURCE_VERSION: &str = "220.68";
 /// seeing a picture — a real device's log showed the pin flow answering `470` at the second
 /// step, which is a protocol it was told to try and this crate does not complete.
 ///
-/// `dnssdint.h:33`'s `0x5A7FFEE6` is the value before `uxplay.cpp` adjusts it; the running
+/// `dnssdint.h:33`'s `0x5A7FFEE6` is the value before adjusts it; the running
 /// receiver is what matters, and it says `0x527FFEE6`.
 pub const DEFAULT_FEATURES: u64 = 0x527F_FEE6;
 
-/// Pairing identity upstream advertises (`upstream/UxPlay/lib/dnssdint.h:49`).
+/// Pairing identity the protocol advertises.
 pub const DEFAULT_PI: &str = "2e388006-13ba-4041-9a67-25dd4a43d536";
 
-/// `vv` upstream advertises (`upstream/UxPlay/lib/dnssdint.h:48`).
+/// `vv` the protocol advertises.
 pub const DEFAULT_VV: u32 = 2;
 
-/// Default display width in pixels (`upstream/UxPlay/lib/raop.c:620-624`).
+/// Default display width in pixels.
 pub const DEFAULT_WIDTH: u64 = 1920;
 
-/// Default display height in pixels (`upstream/UxPlay/lib/raop.c:620-624`).
+/// Default display height in pixels.
 pub const DEFAULT_HEIGHT: u64 = 1080;
 
 /// Default display refresh rate in hertz
-/// (`upstream/UxPlay/lib/raop.c:620-624`).
 pub const DEFAULT_REFRESH_RATE: f64 = 60.0;
 
-/// Default display frame rate upstream advertises
-/// (`upstream/UxPlay/lib/raop.c:620-624`).
+/// Default display frame rate the protocol advertises
 pub const DEFAULT_MAX_FPS: u64 = 30;
 
-/// `statusFlags` upstream always sends
-/// (`upstream/UxPlay/lib/raop_handlers.h:148`).
+/// `statusFlags` the protocol always sends
 pub const STATUS_FLAGS: u64 = 68;
 
-/// Hard-coded display identifier upstream always sends
-/// (`upstream/UxPlay/lib/raop_handlers.h:219`).
+/// Hard-coded display identifier the protocol always sends
 pub const DISPLAY_UUID: &str = "e0ff8a27-6738-3d56-8a16-cc53aacee925";
 
-/// Bitmap of the single display upstream describes
-/// (`upstream/UxPlay/lib/raop_handlers.h:228`).
+/// Bitmap of the single display the protocol describes
 pub const DISPLAY_FEATURES: u64 = 14;
 
-/// Audio formats up to 5.1 surround that upstream advertises
-/// (`upstream/UxPlay/lib/raop_handlers.h:198-199`).
+/// Audio formats up to 5.1 surround that the protocol advertises
 pub const AUDIO_OUTPUT_FORMATS: u64 = 0x03FF_FFFC;
 
 /// The identity this receiver advertises to clients.
 ///
-/// Upstream keeps the same facts spread over its DNS-SD record, `raop_t` and
+/// The protocol keeps the same facts spread over its DNS-SD record, `raop_t` and
 /// the `GLOBAL_MODEL`/`GLOBAL_VERSION` macros; this type collects the ones
-/// `GET /info` and the upstream defaults need so a caller can describe a
+/// `GET /info` and the protocol defaults need so a caller can describe a
 /// receiver in one value.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeviceIdentity {
-    /// Hardware address a client sees as `deviceID` and `macAddress`. Upstream
+    /// Hardware address a client sees as `deviceID` and `macAddress`. The protocol
     /// formats it with `utils_hwaddr_airplay`, i.e. lower-case hex pairs
     /// separated by colons.
     pub device_id: String,
@@ -257,7 +244,6 @@ pub struct DeviceIdentity {
     /// `model` value, [`DEFAULT_MODEL`] unless the caller overrides it.
     pub model: String,
     /// Ed25519 public key of the receiver, sent as the `pk` data value
-    /// (`upstream/UxPlay/lib/raop_handlers.h:126-131`).
     ///
     /// [`RouteHandlers::with_pairing`] replaces it with
     /// [`PairingState::identity_public`], so that a client can never cache one
@@ -273,8 +259,8 @@ pub struct DeviceIdentity {
     pub pi: String,
     /// `vv` value, [`DEFAULT_VV`] by default.
     pub vv: u32,
-    /// `initialVolume` value. Upstream asks its audio callback for the current
-    /// client volume (`upstream/UxPlay/lib/raop_handlers.h:168`).
+    /// `initialVolume` value. The protocol asks its audio callback for the current
+    /// client volume.
     pub initial_volume: f64,
     /// Display width in pixels, [`DEFAULT_WIDTH`] by default.
     pub width: u64,
@@ -288,7 +274,7 @@ pub struct DeviceIdentity {
     pub overscanned: bool,
     /// Raw `txtAirPlay` record a client asks for with
     /// `GET /info?txtAirPlay`, or `None` while service discovery has not been
-    /// ported (`upstream/UxPlay/lib/raop_handlers.h:96-100`).
+    /// ported.
     pub txt_airplay: Option<Vec<u8>>,
     /// Raw `txtRAOP` record, the RAOP counterpart of [`Self::txt_airplay`].
     pub txt_raop: Option<Vec<u8>>,
@@ -296,8 +282,8 @@ pub struct DeviceIdentity {
 
 /// Who a client says it is, read from its `SETUP` request.
 ///
-/// Upstream hands these three values to its `report_client_request` callback and lets the
-/// program decide whether the session proceeds (`raop_handlers.h:756-767`). They are what
+/// The protocol hands these three values to its `report_client_request` callback and lets the
+/// program decide whether the session proceeds. They are what
 /// `-restrict`, `-allow` and `-block` match against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientRequest {
@@ -311,7 +297,7 @@ pub struct ClientRequest {
 
 /// Which clients may start a session.
 ///
-/// This is upstream's `-restrict`, `-allow` and `-block` together. A blocked device is
+/// This is the protocol's `-restrict`, `-allow` and `-block` together. A blocked device is
 /// always refused; when `restrict` is set, only an allowed device is admitted; otherwise
 /// everything that is not blocked is. A device identifier is the one a client sends as
 /// `deviceID`, the same string a receiver stores when it remembers a pairing.
@@ -344,9 +330,9 @@ impl ClientPolicy {
 
 /// The display a receiver offers a client in `GET /info`.
 ///
-/// This is upstream's `-s wxh@r`, `-fps` and `-o` set together: a client reads them from
+/// This is the protocol's `-s wxh@r`, `-fps` and `-o` set together: a client reads them from
 /// the `displays` array and sizes and paces the mirror stream it sends. A receiver that
-/// does not care takes [`Display::default`], which is upstream's own default of 1920x1080
+/// does not care takes [`Display::default`], which is the protocol's own default of 1920x1080
 /// at 60 Hz, thirty frames a second, not overscanned.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Display {
@@ -376,7 +362,7 @@ impl Default for Display {
 
 impl DeviceIdentity {
     /// Creates an identity for `device_id` and `name` that carries `public_key`
-    /// and keeps every other upstream default.
+    /// and keeps every other the protocol default.
     pub fn new(device_id: impl Into<String>, name: impl Into<String>, public_key: Vec<u8>) -> Self {
         Self {
             device_id: device_id.into(),
@@ -388,7 +374,7 @@ impl DeviceIdentity {
 }
 
 impl Default for DeviceIdentity {
-    /// Upstream's defaults with a placeholder hardware address.
+    /// The protocol's defaults with a placeholder hardware address.
     ///
     /// The hardware address identifies the receiver, so a caller that serves
     /// real clients must set [`DeviceIdentity::device_id`] and
@@ -425,7 +411,7 @@ type RemoteControlHandler = Box<dyn FnMut(&str, &str) + Send>;
 
 /// The handlers one control connection uses.
 ///
-/// Upstream keeps the same state in `raop_conn_t`, so one instance serves one
+/// The protocol keeps the same state in `raop_conn_t`, so one instance serves one
 /// connection: the FairPlay session established by `POST /fp-setup` and the
 /// pairing exchange belong to the client that opened it. The receiver-wide half
 /// of pairing lives in [`PairingState`], which a caller shares between
@@ -460,8 +446,8 @@ pub struct RouteHandlers {
     last_remote: Option<(String, String)>,
     /// The volume the client last asked for.
     ///
-    /// Upstream keeps the same value on its audio renderer and answers `GET_PARAMETER`
-    /// with it (`raop_handlers.h:1093-1097`); a client that reads back what it set is a
+    /// The protocol keeps the same value on its audio renderer and answers `GET_PARAMETER`
+    /// with it; a client that reads back what it set is a
     /// client that can show the right slider. Shared between connections because a
     /// session's volume does not belong to one socket.
     client_volume: std::sync::Arc<std::sync::Mutex<f64>>,
@@ -508,7 +494,6 @@ impl RouteHandlers {
     /// `/pair-setup-pin` answer with; it replaces
     /// [`DeviceIdentity::public_key`] so that a client can never cache one
     /// identity and be authenticated with another
-    /// (`upstream/UxPlay/lib/raop.c:659-674` reads a single `pk` for all three).
     pub fn with_pairing(identity: DeviceIdentity, state: Arc<PairingState>) -> Self {
         let mut identity = identity;
         identity.public_key = state.identity_public().to_vec();
@@ -535,16 +520,15 @@ impl RouteHandlers {
 
     /// Sets the callback that receives what a `SET_PARAMETER` request asked for.
     ///
-    /// Upstream applies the same values to its media session
-    /// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:1149-1158`).
+    /// The protocol applies the same values to its media session
     pub fn set_parameter_callback(&mut self, callback: impl FnMut(SetParameter) + Send + 'static) {
         self.parameter = Some(Box::new(callback));
     }
 
     /// Sets the callback that receives what a `SETUP` request established.
     ///
-    /// Upstream passes the same values straight into its media sessions
-    /// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:926-929`); a receiver
+    /// The protocol passes the same values straight into its media sessions
+    ///; a receiver
     /// without those sessions uses the callback to keep the key for whatever
     /// plays the stream.
     pub fn set_setup_callback(&mut self, callback: impl FnMut(SetupRequest) + Send + 'static) {
@@ -559,7 +543,7 @@ impl RouteHandlers {
     /// Sets what to do with artwork a client sends.
     ///
     /// A client sends its cover art as `SET_PARAMETER` with `Content-Type: image/jpeg` or
-    /// `image/png` (`raop_handlers.h:1164-1171`); upstream hands the bytes to its renderer
+    /// `image/png`; the protocol hands the bytes to its renderer
     /// and this crate hands them to the caller, which is the only place a file can exist.
     pub fn set_artwork_callback(&mut self, callback: impl FnMut(&str, &[u8]) + Send + 'static) {
         self.artwork = Some(Box::new(callback));
@@ -567,16 +551,16 @@ impl RouteHandlers {
 
     /// Sets what to do with the metadata listing a client sends.
     ///
-    /// The bytes are a DMAP listing; `media::dmap` is how this crate reads it, and upstream
-    /// writes the text to its `-md` file (`uxplay.cpp:2940-2952`).
+    /// The bytes are a DMAP listing; `media::dmap` is how this crate reads it, and the protocol
+    /// writes the text to its `-md` file.
     pub fn set_metadata_callback(&mut self, callback: impl FnMut(&[u8]) + Send + 'static) {
         self.metadata = Some(Box::new(callback));
     }
 
     /// Sets what to do with the remote-control identifiers a request carries.
     ///
-    /// `DACP-ID` and `Active-Remote` name the client a remote control belongs to; upstream
-    /// exports them for `-dacp` (`uxplay.cpp`). They authorize nothing: the headers are
+    /// `DACP-ID` and `Active-Remote` name the client a remote control belongs to; the protocol
+    /// exports them for `-dacp`. They authorize nothing: the headers are
     /// whatever the client wrote.
     pub fn set_remote_control_callback(
         &mut self,
@@ -587,8 +571,8 @@ impl RouteHandlers {
 
     /// Sets which clients may start a session.
     ///
-    /// Upstream consults its `report_client_request` callback in the middle of `SETUP`
-    /// (`raop_handlers.h:756-767`) and drops the connection when it refuses; this answers
+    /// The protocol consults its `report_client_request` callback in the middle of `SETUP`
+    /// and drops the connection when it refuses; this answers
     /// `403 Forbidden` instead, because a client that could not be admitted should be told
     /// that rather than left with a closed socket.
     pub fn set_client_policy(&mut self, policy: ClientPolicy) {
@@ -597,8 +581,8 @@ impl RouteHandlers {
 
     /// Sets the callback reported for `POST /feedback`.
     ///
-    /// Upstream's handler only calls `conn_feedback`
-    /// (`upstream/UxPlay/lib/raop_handlers.h:1204-1213`), which is how a receiver notices
+    /// The protocol's handler only calls `conn_feedback`
+    ///, which is how a receiver notices
     /// that a client is still there; the response is the default `200 OK`.
     pub fn set_feedback_callback(&mut self, callback: impl FnMut() + Send + 'static) {
         self.feedback = Some(Box::new(callback));
@@ -606,8 +590,8 @@ impl RouteHandlers {
 
     /// Answers `FLUSH`, naming the sequence the client wants to resume at.
     ///
-    /// Upstream reads `RTP-Info` for `seq=` and hands that number to its audio thread
-    /// (`upstream/UxPlay/lib/raop_handlers.h`, `raop_handler_flush`). A request without
+    /// The protocol reads `RTP-Info` for `seq=` and hands that number to its audio thread
+    /// A request without
     /// it still flushes: what is buffered is stale either way, and the next packet that
     /// arrives re-establishes the sequence.
     fn flush(&mut self, request: &RouteRequest<'_>) -> RouteReply {
@@ -693,7 +677,7 @@ impl RouteHandlers {
     /// Runs one pairing step on this connection's session.
     ///
     /// Without a [`PairingState`] the route stays unimplemented, which is what
-    /// the control layer reports for a route upstream serves and this crate does
+    /// the control layer reports for a route the protocol serves and this crate does
     /// not.
     fn pairing_reply(
         &mut self,
@@ -714,9 +698,8 @@ impl RouteHandlers {
     }
 
     /// Port of `raop_handler_pairsetup_pin`
-    /// (`upstream/UxPlay/lib/raop_handlers.h:276-433`).
     fn pair_setup_pin(&mut self, request: &RouteRequest<'_>) -> RouteReply {
-        // `raop_handlers.h:287-298`: upstream requires the header block to
+        // `raop_handlers.h:287-298`: the protocol requires the header block to
         // mention the binary plist format and answers 470 otherwise. It searches
         // the whole head, the port only its `Content-Type`.
         let is_plist = request
@@ -734,7 +717,6 @@ impl RouteHandlers {
 
 impl RouteHandlers {
     /// Port of `raop_handler_setup`
-    /// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:600-1067`).
     ///
     /// This step covers what an AirPlay 1 client sends: the encrypted audio key
     /// with its IV, and the streams it wants. Later steps add the digest
@@ -744,16 +726,16 @@ impl RouteHandlers {
     fn setup(&mut self, request: &RouteRequest<'_>) -> RouteReply {
         // The clock exchange goes to the address a client's control connection came
         // from, so the request has to say which that was
-        // (`raop_ntp.c:614-618`).
+        //.
         self.peer = request.peer;
         // The password gate comes first, before any of the body is looked at:
-        // upstream parses the property list before it challenges
-        // (`raop_handlers.h:601-648`), and a receiver should not spend work on a
+        // the protocol parses the property list before it challenges
+        //, and a receiver should not spend work on a
         // request that has not authenticated yet.
         if let Some(challenge) = self.digest_challenge(request) {
             return challenge;
         }
-        // Upstream reads the body with `plist_from_bin` and carries on with an
+        // The protocol reads the body with `plist_from_bin` and carries on with an
         // empty request when that fails (`:601-644`); a malformed body is
         // refused here instead, because the alternative is a `200 OK` that
         // describes a session nobody can use.
@@ -764,9 +746,9 @@ impl RouteHandlers {
             return RouteReply::new(400, "Bad Request");
         };
 
-        // Who is asking decides whether there is a session at all. Upstream consults its
+        // Who is asking decides whether there is a session at all. The protocol consults its
         // callback at the same point, after the password gate and before it derives keys
-        // (`raop_handlers.h:756-767`).
+        //.
         let client = ClientRequest {
             device_id: body.get_string("deviceID").unwrap_or_default().to_owned(),
             model: body.get_string("model").unwrap_or_default().to_owned(),
@@ -802,7 +784,7 @@ impl RouteHandlers {
                 }
                 let mut key = match self.fairplay.decrypt(encrypted) {
                     Ok(key) => key,
-                    // Upstream logs the failure and keeps going with whatever the
+                    // The protocol logs the failure and keeps going with whatever the
                     // buffer held (`:807-813`).
                     Err(_) => return RouteReply::new(400, "Bad Request"),
                 };
@@ -866,13 +848,13 @@ impl RouteHandlers {
                     let keys: Vec<&str> = stream.keys().map(String::as_str).collect();
                     log::debug!("set     stream type {kind} carried [{}]", keys.join(", "));
                 }
-                // Upstream's `switch` has no default arm: an unknown type is
+                // The protocol's `switch` has no default arm: an unknown type is
                 // simply not answered (`:954-1050`).
                 if !matches!(kind, 96 | 110) {
                     continue;
                 }
                 // The coding a client is sending, which is what decides the decoder: `ct`
-                // is 2 for ALAC and 8 for AAC-ELD (`raop_rtp.c:113`), and `spf` is the
+                // is 2 for ALAC and 8 for AAC-ELD, and `spf` is the
                 // samples a frame carries. Read here rather than assumed downstream,
                 // because a receiver that guesses is wrong for every client that uses the
                 // other coding and cannot tell that it is.
@@ -897,8 +879,8 @@ impl RouteHandlers {
         if let Some(port) = self.setup_ports.timing_port {
             dictionary.insert("timingPort".to_owned(), u64::from(port).into());
         }
-        // Upstream answers `eventPort` unconditionally, with `0` when there is no
-        // event channel (`raop_handlers.h:931-936`). A response that omitted the
+        // The protocol answers `eventPort` unconditionally, with `0` when there is no
+        // event channel. A response that omitted the
         // key is a different shape from the one a client was written against.
         dictionary.insert(
             "eventPort".to_owned(),
@@ -948,13 +930,13 @@ impl RouteHandlers {
 
     /// RFC 2617 password gate of `SETUP`, or `None` when the request may pass.
     ///
-    /// Upstream keeps the same three facts on its receiver: whether the
+    /// The protocol keeps the same three facts on its receiver: whether the
     /// connection authenticated, the challenge it handed out, and how many
-    /// attempts failed (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:649-748`).
+    /// attempts failed.
     /// The port keeps the nonce and the flag per connection and the failure count
     /// on the shared receiver state, so guessing across connections costs
     /// attempts. The nonce is one the port drew from its own random source
-    /// instead of upstream's construction, which hashes a heap address.
+    /// instead of the protocol's construction, which hashes a heap address.
     fn digest_challenge(&mut self, request: &RouteRequest<'_>) -> Option<RouteReply> {
         let state = Arc::clone(self.pairing.as_ref()?.shared());
         if !state.has_password() || self.authenticated {
@@ -994,9 +976,8 @@ impl RouteHandlers {
     }
 
     /// Port of `raop_handler_set_parameter`
-    /// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:1125-1179`).
     ///
-    /// Upstream reads the body of a `text/parameters` request with `sscanf` and hands the
+    /// The protocol reads the body of a `text/parameters` request with `sscanf` and hands the
     /// result to its media layer; cover art and the DMAP listing are routed to callbacks the
     /// same way. This crate parses every parameter line instead of only the first, reports
     /// each one, and passes artwork and metadata to the callbacks a caller installed. A
@@ -1004,7 +985,7 @@ impl RouteHandlers {
     /// without that feature does.
     fn set_parameter(&mut self, request: &RouteRequest<'_>) -> RouteReply {
         let Some(content_type) = request.head.header("content-type") else {
-            // Upstream answers the same status for a request that says nothing
+            // The protocol answers the same status for a request that says nothing
             // about what it carries (`:1135-1139`).
             return RouteReply::new(451, "Parameter not understood");
         };
@@ -1024,7 +1005,7 @@ impl RouteHandlers {
         if media_type != "text/parameters" {
             return RouteReply::new(200, "OK");
         }
-        // Every line is read, not just the first: upstream reads the start of the body
+        // Every line is read, not just the first: the protocol reads the start of the body
         // (`:1146`, `:1155`), but a client that sends `progress` before `volume` would have
         // its volume request dropped. The debug line carries the line that was understood,
         // so a session that changes nothing can be traced to what actually arrived.
@@ -1038,7 +1019,7 @@ impl RouteHandlers {
                 .strip_prefix("volume: ")
                 .and_then(|value| value.trim().parse::<f32>().ok())
                 // A value no media layer can use is ignored rather than passed on:
-                // upstream's `sscanf` would leave its variable at zero.
+                // the protocol's `sscanf` would leave its variable at zero.
                 .filter(|volume| volume.is_finite())
                 .map(SetParameter::Volume)
                 .or_else(|| {
@@ -1060,9 +1041,9 @@ impl RouteHandlers {
             log::debug!("set_parameter: {parsed:?} from {line:?}");
             if let SetParameter::Volume(level) = &parsed {
                 // The client's value is what the receiver plays at from here on, and
-                // what it answers with when asked; upstream does the same through its
+                // what it answers with when asked; the protocol does the same through its
                 // renderer. The scale is decibels: -30 is silence and 0 is full, and a
-                // value outside it is clamped the way upstream clamps it. `-144` is the
+                // value outside it is clamped the way the protocol clamps it. `-144` is the
                 // client's mute signal and is kept as sent, because it is what
                 // `GET_PARAMETER` reports back.
                 let value = f64::from(*level);
@@ -1098,10 +1079,9 @@ impl RouteHandlers {
     }
 
     /// Port of `raop_handler_get_parameter`
-    /// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:1069-1123`).
     ///
     /// A client that asks about `volume` gets the value its own player reported,
-    /// which upstream reads from its media callbacks and defaults to `0.0`
+    /// which the protocol reads from its media callbacks and defaults to `0.0`
     /// without them (`:1093-1097`). This crate has no media layer, so it answers
     /// that default instead of inventing a level.
     fn get_parameter(&mut self, request: &RouteRequest<'_>) -> RouteReply {
@@ -1132,7 +1112,6 @@ impl RouteHandlers {
     }
 
     /// Port of `raop_handler_feedback`
-    /// (`upstream/UxPlay/lib/raop_handlers.h:1204-1213`).
     fn feedback_reply(&mut self) -> RouteReply {
         self.feedback_clock
             .store(now_millis(), std::sync::atomic::Ordering::Relaxed);
@@ -1143,7 +1122,6 @@ impl RouteHandlers {
     }
 
     /// Port of `raop_handler_info`
-    /// (`upstream/UxPlay/lib/raop_handlers.h:36-249`).
     ///
     /// Three request shapes reach this handler: a plist `qualifier` request that
     /// asks for a DNS-SD TXT record, a full `GET /info`, and a Bluetooth LE
@@ -1227,14 +1205,12 @@ impl RouteHandlers {
     }
 
     /// Port of `raop_handler_fpsetup`
-    /// (`upstream/UxPlay/lib/raop_handlers.h:544-589`).
     ///
     /// A 16-byte challenge starts a session and is answered with a 142-byte
     /// reply, a 164-byte challenge completes it and is answered with 32 bytes.
-    /// Any other length is a client error upstream only logs
-    /// (`raop_handlers.h:585-587`), and a version or mode this crate does not
-    /// implement answers `501 Not Implemented` like upstream's version check
-    /// (`raop_handlers.h:558`).
+    /// Any other length is a client error the protocol only logs
+    ///, and a version or mode this crate does not
+    /// implement answers `501 Not Implemented` like the protocol's version check
     fn fairplay_setup(&mut self, request: &RouteRequest<'_>) -> RouteReply {
         let body = request.body;
         if body.len() == SETUP_REQUEST_LEN {
@@ -1262,7 +1238,6 @@ fn now_millis() -> u64 {
 }
 
 /// `qualifier` array of a `GET /info` request, first string entry
-/// (`upstream/UxPlay/lib/raop_handlers.h:73-77`).
 fn qualifier(body: &[u8]) -> Option<String> {
     let request = Plist::parse(body).ok()?;
     let first = request.get_array("qualifier").ok()?.first()?;
@@ -1270,7 +1245,6 @@ fn qualifier(body: &[u8]) -> Option<String> {
 }
 
 /// Wraps `value` into a binary plist response
-/// (`upstream/UxPlay/lib/raop_handlers.h:246-248`).
 ///
 /// Encoding a dictionary of strings, integers, reals, booleans and data cannot
 /// fail, so the `500` is a safety net rather than an expected answer: a client
@@ -1285,14 +1259,13 @@ fn binary_plist(value: plist::Value) -> RouteReply {
 }
 
 /// FairPlay reply with an opaque body
-/// (`upstream/UxPlay/lib/raop_handlers.h:549-570`).
 fn octet_stream(body: Vec<u8>) -> RouteReply {
     RouteReply::ok()
         .with_header("Content-Type", "application/octet-stream")
         .with_body(body)
 }
 
-/// `audioLatencies` array (`upstream/UxPlay/lib/raop_handlers.h:171-193`).
+/// `audioLatencies` array.
 fn audio_latencies() -> plist::Value {
     let default = |audio_type_identifier: u64| {
         plist::dictionary([
@@ -1305,7 +1278,7 @@ fn audio_latencies() -> plist::Value {
     plist::Value::Array(vec![default(100), default(101)])
 }
 
-/// `audioFormats` array (`upstream/UxPlay/lib/raop_handlers.h:195-213`).
+/// `audioFormats` array.
 fn audio_formats() -> plist::Value {
     let format = |audio_type_identifier: u64| {
         plist::dictionary([
@@ -1323,12 +1296,12 @@ fn audio_formats() -> plist::Value {
     plist::Value::Array(vec![format(100), format(101)])
 }
 
-/// `displays` array (`upstream/UxPlay/lib/raop_handlers.h:215-243`).
+/// `displays` array.
 ///
 /// The single entry describes the virtual display the receiver renders to.
 fn displays(identity: &DeviceIdentity) -> plist::Value {
-    // Upstream sends the frame interval and divides by the refresh rate
-    // (`raop_handlers.h:225`); a rate that is not positive would divide by zero,
+    // The protocol sends the frame interval and divides by the refresh rate
+    //; a rate that is not positive would divide by zero,
     // so the port reports `0.0` for an interval it cannot compute.
     let refresh_interval = if identity.refresh_rate > 0.0 {
         1.0 / identity.refresh_rate
@@ -1421,8 +1394,8 @@ fn describe_plist(plist: &Plist) -> String {
 ///
 /// The value is a 64-bit identifier a client may write as a *signed* number, and a
 /// device does: one sent `Integer(-4578581632668906207)`, which is
-/// `0xc0759c4371a44d21`. Upstream formats it with `%llu`
-/// (`upstream/UxPlay@3dbf7cee:lib/raop_handlers.h:963`), which prints those same bits
+/// `0xc0759c4371a44d21`. The protocol formats it with `%llu`
+///, which prints those same bits
 /// as unsigned, so the value is **reinterpreted** rather than converted: a negative
 /// number is not an out-of-range identifier, it is the same identifier written down
 /// differently, and converting it instead makes the stream unkeyable in a session

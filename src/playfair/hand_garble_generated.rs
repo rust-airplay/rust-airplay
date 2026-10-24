@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! Translation of UxPlay's FairPlay hand garbling transform.
+//! The FairPlay hand garbling transform.
 //!
 //! Buffers use `i128` slots to model C's integer promotions; each write is truncated to one
 //! byte exactly as an `unsigned char` assignment.
 //!
-//! Comments inside the translated body are the upstream author's, kept verbatim so the
+//! Comments inside the translated body are the protocol author's, kept verbatim so the
 //! transcription stays checkable against its source. They are not this project's voice.
 
 #![allow(clippy::all, non_snake_case, unused_mut, unused_parens)]
@@ -910,7 +910,7 @@ pub(crate) fn hand_garble_bytes(
 mod tests {
     use super::*;
     #[test]
-    fn matches_upstream_garble_vector() {
+    fn matches_the_garble_vector() {
         let mut b0 = [
             0x96, 0x5f, 0xc6, 0x53, 0xf8, 0x46, 0xcc, 0x18, 0xdf, 0xbe, 0xb2, 0xf8, 0x38, 0xd7,
             0xec, 0x22, 0x03, 0xd1, 0x20, 0x8f,

@@ -34,7 +34,7 @@ cargo package --list
 
 ## 默认忽略的测试
 
-有些测试需要这台机器未必有的东西：GStreamer 运行时、UxPlay 检出，或者几分钟的吞吐测量时间。它们都带 `#[ignore]` 和原因，`cargo test -- --ignored` 会运行它们，默认运行会说明跳过了多少。
+有些测试需要这台机器未必有的东西：一次长时间的测量，或者几分钟的吞吐测量时间。它们都带 `#[ignore]` 和原因，`cargo test -- --ignored` 会运行它们，默认运行会说明跳过了多少。
 
 ## 发布
 
@@ -43,18 +43,6 @@ cargo package --allow-dirty
 ```
 
 打包但不发布，用来在发布前验证 `include` 列表与元数据。`cargo publish` 是发布步骤，在干净的 `main` 工作树上执行。
-
-## 差分测试
-
-有一组测试把本实现与 UxPlay 自身的 C 代码对比：镜像密钥流、计数器、音频解密、配对向量与 FairPlay 变换。它默认被忽略，因为需要 UxPlay 的检出以及编译它的编译器。
-
-需要 `upstream/UxPlay` 下提交 `517cbb1240d9b9f69330c55b957cdd52b4175b2a` 的检出，以及 MSYS2 UCRT64，然后：
-
-```sh
-pwsh -File tools/oracle/run.ps1
-```
-
-退出码即测试结果。各模式打印什么见 `tools/oracle/README.md`。
 
 ## 播放媒体
 
