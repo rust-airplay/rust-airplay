@@ -152,6 +152,11 @@ impl VideoCodec {
 /// (`uxplay.cpp:2803-2821`). A renderer wants a linear gain, so the two scales meet here:
 /// the fraction is how far up the slider the client is, and the curve turns that into the
 /// gain a sound card understands.
+///
+/// The direction matters: `-30` is silence and `0` is full, so an `-8` decibel value must land
+/// high on the slider and a `-22` one low. The first version of this function computed the
+/// two ends and the middle correctly and mirrored everything between them, which is a volume
+/// that is quiet near the top and loud near the bottom.
 pub fn airplay_db_to_fraction(db: f64) -> f64 {
     const MUTE: f64 = -144.0;
     const LOW_DB: f64 = -30.0;
@@ -162,7 +167,7 @@ pub fn airplay_db_to_fraction(db: f64) -> f64 {
     if db >= HIGH_DB {
         return 1.0;
     }
-    ((HIGH_DB - db) / (HIGH_DB - LOW_DB)).clamp(0.0, 1.0)
+    ((db - LOW_DB) / (HIGH_DB - LOW_DB)).clamp(0.0, 1.0)
 }
 
 /// How a client's slider position becomes a gain.
@@ -720,6 +725,12 @@ mod tests {
         assert_eq!(airplay_db_to_fraction(0.0), 1.0);
         assert_eq!(airplay_db_to_fraction(5.0), 1.0);
         assert!((airplay_db_to_fraction(-15.0) - 0.5).abs() < 1e-9);
+        // The two ends and the middle were right in the first version and the rest was
+        // mirrored: -8 dB is louder than -15 and must be higher up the slider, not lower.
+        assert!((airplay_db_to_fraction(-8.0) - 22.0 / 30.0).abs() < 1e-9);
+        assert!((airplay_db_to_fraction(-22.0) - 8.0 / 30.0).abs() < 1e-9);
+        assert!(airplay_db_to_fraction(-8.0) > airplay_db_to_fraction(-15.0));
+        assert!(airplay_db_to_fraction(-15.0) > airplay_db_to_fraction(-22.0));
     }
 
     #[test]
