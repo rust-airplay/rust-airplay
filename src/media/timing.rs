@@ -21,13 +21,17 @@
 //! response[24..27]  t3, 32 bits, the client's transmit time
 //! ```
 //!
-//! This module is the packet layer of that exchange: it builds the request and
-//! reads what the answer carries. The clock arithmetic on top of it is *not*
-//! here yet, and deliberately so: upstream adjusts the remote values with
-//! `raop_ntp_adjust_remote_timestamp_offset`, rejects duplicates and bogus
-//! packets, and folds in a `sync_delay`, all of which has to be read out of the
-//! source rather than guessed at. `docs/ARCHITECTURE.md` records that as the next
-//! slice.
+//! This module is both halves of that exchange. [`build_request`] and [`parse_response`] are
+//! the packet layer; [`RemoteClock`] is the clock on top of it, which filters the exchanges,
+//! keeps the offset that turns a client timestamp into a local time, and refuses answers
+//! that echo no request or repeat one.
+//!
+//! The arithmetic is integer nanoseconds because the wire values are whole seconds: `t1`,
+//! `t2` and `t3` are 32-bit seconds and upstream truncates the arrival time to the same
+//! width (`raop_ntp.c:656-697`). A fraction mixed into that arithmetic makes the offset
+//! wrong by half a round trip. What the exchange establishes is an epoch, not a fine
+//! schedule: media is paced from the arrival of its first frame, and the epoch is what lets
+//! a client timestamp be read as a local one.
 
 use crate::ntp;
 
@@ -190,7 +194,7 @@ pub fn q32_32_to_nanos(timestamp: u64) -> i64 {
 /// One completed exchange with the client's timing port.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClockSample {
-    /// The local time the answer arrived, in NTP's 64-bit timestamp form.
+    /// Local arrival time of the answer, in nanoseconds since the Unix epoch.
     pub received: u64,
     /// The `t3` the client reported, which is what makes a repeat recognisable.
     pub echo: u32,
@@ -265,12 +269,12 @@ impl RemoteClock {
 
     /// Records a request sent at `t1`, which is the NTP timestamp the answer must echo.
     ///
-    /// Returns whether the request fits in the table of outstanding ones. Upstream keeps
-    /// eight and overwrites the oldest, which is what happens here.
-    pub fn request_sent(&mut self, t1: u32) -> bool {
+    /// The table holds [`OUTSTANDING_REQUESTS`] entries and the oldest is overwritten, as
+    /// upstream does. An answer that echoes none of them is not this receiver's, and
+    /// [`RemoteClock::response_received`] refuses it.
+    pub fn request_sent(&mut self, t1: u32) {
         self.outstanding[self.next % OUTSTANDING_REQUESTS] = t1;
         self.next = (self.next + 1) % OUTSTANDING_REQUESTS;
-        true
     }
 
     /// Takes one exchange, and returns the estimate it produced, if any.
@@ -440,7 +444,9 @@ impl RemoteClock {
         if !self.have_estimate {
             return None;
         }
-        Some((q32_32_to_nanos(remote_timestamp) + fixed - self.offset_nanos) as u64)
+        let nanos = i128::from(q32_32_to_nanos(remote_timestamp)) + i128::from(fixed)
+            - i128::from(self.offset_nanos);
+        Some(nanos.clamp(0, i128::from(u64::MAX)) as u64)
     }
 
     /// The client's time for a point in the local clock, in nanoseconds.
@@ -450,8 +456,8 @@ impl RemoteClock {
         if !self.have_estimate {
             return None;
         }
-        let remote = (local_nanos as i64 + self.offset_nanos - fixed).max(0) as u64;
-        Some(remote)
+        let remote = i128::from(local_nanos) + i128::from(self.offset_nanos) - i128::from(fixed);
+        Some(remote.clamp(0, i128::from(u64::MAX)) as u64)
     }
 
     /// The client's clock minus this one, in nanoseconds.
@@ -544,7 +550,7 @@ mod tests {
         // This machine's clock, in the same era: Unix seconds plus the same offset.
         let t1_seconds: u32 = 1_792_231_849u32.wrapping_add(2_208_988_800);
 
-        assert!(clock.request_sent(t1_seconds));
+        clock.request_sent(t1_seconds);
         // A one-way trip of ten milliseconds, and the client takes none of it processing.
         let t4 = 1_792_231_849_000_000_000 + 2 * 10_000_000;
 
@@ -640,6 +646,27 @@ mod tests {
             None,
             "a repeated t3 is the same exchange counted twice"
         );
+    }
+
+    #[test]
+    fn an_impossible_timestamp_saturates_instead_of_overflowing() {
+        // A client timestamp is a full 64-bit value, and the conversion adds the fixed
+        // offset on top of it. The first version did that in `i64` and overflowed on a
+        // timestamp near the top of the range, which is a panic in a debug build and a
+        // wrapped time in a release one.
+        let mut clock = RemoteClock::new();
+        let t1 = 1_792_231_849u32.wrapping_add(2_208_988_800);
+        let t2 = t1;
+        let t3 = t2;
+        clock.request_sent(t1);
+        clock
+            .response_received(t1, t2, t3, 1_792_231_849_020_000_000)
+            .expect("a sample");
+
+        let local = clock.to_local(u64::MAX).expect("a conversion");
+        assert!(local > 0, "the conversion produced a value");
+        let remote = clock.to_remote(u64::MAX).expect("a conversion");
+        assert!(remote > 0);
     }
 
     #[test]

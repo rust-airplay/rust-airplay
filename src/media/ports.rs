@@ -461,20 +461,25 @@ impl MirrorStream {
         };
         let mut payload = vec![0u8; header.payload_size as usize];
         self.stream.read_exact(&mut payload).await?;
-        // What the first packets are, for a device whose codec data has to be read
-        // rather than assumed: a mirror stream carries either coding and the packet
-        // that announces which one is the one worth seeing. A log record rather than a
-        // print, so the program embedding this crate decides whether it is shown - and a
-        // level check that is far cheaper per packet than the environment lookup this
-        // used to do.
-        log::debug!(
-            "mirror  packet kind={:?} payload={} option=0x{:04x} ts={} bytes: {}",
-            header.kind,
-            payload.len(),
-            header.option,
-            header.timestamp,
-            hex_preview(&payload)
-        );
+        // What the packets are, for a device whose codec data has to be read rather than
+        // assumed: a mirror stream carries either coding and the packet that announces
+        // which one is the one worth seeing. A log record rather than a print, so the
+        // program embedding this crate decides whether it is shown.
+        //
+        // The preview is built only when the record would be emitted. `debug!` formats
+        // lazily but its arguments are evaluated when the macro is reached, and turning a
+        // packet into hex for every packet of a stream is a cost a session that is not
+        // being diagnosed should not pay.
+        if log::log_enabled!(log::Level::Debug) {
+            log::debug!(
+                "mirror  packet kind={:?} payload={} option=0x{:04x} ts={} bytes: {}",
+                header.kind,
+                payload.len(),
+                header.option,
+                header.timestamp,
+                hex_preview(&payload)
+            );
+        }
         Ok(Some((header, payload)))
     }
 }

@@ -4,10 +4,9 @@
 //! Upstream receives audio datagrams, unwraps the RTP header, decrypts the
 //! payload and hands the result to a renderer in sequence order
 //! (`upstream/UxPlay@3dbf7cee:lib/raop_rtp.c:558-668`, with the buffering and
-//! loss detection in `lib/raop_buffer.c`). This module is the first slice of
-//! that path: it reads the packet and delivers payloads in order, with a bounded
-//! amount of memory and a record of what went missing, which is what the
-//! retransmission step needs next.
+//! loss detection in `lib/raop_buffer.c`). This module is that path: it parses a
+//! datagram, decrypts the payload, and delivers frames in sequence order through a
+//! bounded reorder window, recording what went missing so a resend can be asked for.
 //!
 //! # What a datagram looks like
 //!
@@ -30,9 +29,10 @@
 //! rather than samples (`raop_rtp.c:583-587`). Both are reported as what they
 //! are, so a renderer never plays a marker as sound.
 //!
-//! Decryption is deliberately not part of this slice: upstream decrypts the
-//! payload with the key `SETUP` carried, and which bytes the cipher covers is
-//! worth confirming against the source before it lands here.
+//! Decryption is [`decrypt_payload`], and it is not a plain CBC over the payload:
+//! only the bytes that fill whole blocks are encrypted, the tail stays in clear,
+//! and the cipher is reset for every packet. Those three facts are what a
+//! receiver that decrypts the stream as one cipher stream gets wrong.
 
 use std::collections::VecDeque;
 

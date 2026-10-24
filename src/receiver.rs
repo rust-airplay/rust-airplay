@@ -1173,11 +1173,20 @@ pub async fn run(config: Config) -> Result<(), Error> {
                 // What a device actually sends, for a decoder that is not this one to
                 // identify: a stream that is received, queued and played without a sound is
                 // one whose coding is the thing in doubt.
-                let dump_frames = config.dump_audio.clone().map(|path| {
-                    log::info!("media     writing the audio bytes to {}", path.display());
-                    let file = std::fs::File::create(&path)
-                        .unwrap_or_else(|error| panic!("cannot write {}: {error}", path.display()));
-                    std::sync::Arc::new(std::sync::Mutex::new(file))
+                // A diagnostic that cannot be written is a warning, not a reason to end a
+                // session: the path comes from the program, and a program that asked for a
+                // dump is one that wants the session anyway.
+                let dump_frames = config.dump_audio.as_ref().and_then(|path| {
+                    match std::fs::File::create(path) {
+                        Ok(file) => {
+                            log::info!("media     writing the audio bytes to {}", path.display());
+                            Some(std::sync::Arc::new(std::sync::Mutex::new(file)))
+                        }
+                        Err(error) => {
+                            log::warn!("rust-airplay: cannot write {}: {error}", path.display());
+                            None
+                        }
+                    }
                 });
                 // What arrived, so "the client is not sending" and "we are throwing it
                 // away" cannot be confused in a log. A session that never reaches the
@@ -1563,9 +1572,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
             // interpreted, so that a stream which stops is a stream that stopped
             // arriving rather than one this receiver cannot say anything about.
             //
-            // The video dump is opened here, once, for the same reason: `AIRPLAY_DUMP_VIDEO`
-            // names a file that the first frames are written to, and doing that per frame
-            // would make a diagnostic cost something in every session that does not use it.
+            // The video dump is opened here, once, for the same reason: it names a file the
+            // first frames are written to, and opening it per frame would make a diagnostic
+            // cost something in every session that does not use it.
             let mut dumping = config.dump_video.clone().and_then(|path| {
                 std::fs::OpenOptions::new()
                     .create(true)
