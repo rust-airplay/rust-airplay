@@ -199,7 +199,7 @@ H.264——而且在第一帧之前就已知，因为客户端的 codec 包先�
 
 ## 版本
 
-版本 0.1.0。公开 API 就是本版本所记录的这一套；1.0 之前的破坏性变更有可能，并会记录在变更日志。
+版本 0.2.0。公开 API 就是本版本所记录的这一套；1.0 之前的破坏性变更有可能，并会记录在变更日志。
 许可证为 GPL-3.0-or-later。
 
 [`receiver`]: https://docs.rs/rust-airplay/latest/rust_airplay/receiver/index.html

@@ -19,7 +19,7 @@
 
 ```toml
 [dependencies]
-rust-airplay = "0.1"
+rust-airplay = "0.2"
 ```
 
 需要 Rust 1.85 或更新版本，2024 edition。crate 不链接任何 C 库。
@@ -72,7 +72,7 @@ API 参考是源码构建出的 rustdoc：`cargo doc --open`，或 [docs.rs](htt
 
 ## 状态
 
-版本 0.1.0。公开 API 就是本版本所记录的这一套；1.0 之前仍有可能发生破坏性变更，但并未计划。1.0 是 API 冻结、后端可以与本 crate 一起发布的节点。
+版本 0.2.0。公开 API 就是本版本所记录的这一套；1.0 之前仍有可能发生破坏性变更，但并未计划。1.0 是 API 冻结、后端可以与本 crate 一起发布的节点。
 
 ## 许可证
 

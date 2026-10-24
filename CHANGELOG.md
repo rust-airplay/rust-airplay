@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0
+## 0.2.0
 
 The first release: the protocol and media library for building AirPlay 1 and AirPlay 2
 receivers, and the renderer boundary a playback backend implements.
@@ -25,6 +25,12 @@ receivers, and the renderer boundary a playback backend implements.
 - `NullRenderer` counts a session and plays nothing.
 - A complete example backend in `examples/recorder.rs`, and `docs/BACKEND.md` as the guide to
   writing one.
+
+### Documentation
+
+- Every public item is documented, and the examples in that documentation compile as doctests.
+- `docs/API.md` maps the types, `docs/ARCHITECTURE.md` the session path, and `docs/BACKEND.md`
+  the renderer contract. Each has a Chinese copy beside it.
 
 ### Notes
 

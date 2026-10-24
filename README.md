@@ -23,7 +23,7 @@ files it can write are asked for explicitly: `Config::trace_log` and the two dia
 
 ```toml
 [dependencies]
-rust-airplay = "0.1"
+rust-airplay = "0.2"
 ```
 
 Rust 1.85 or newer, 2024 edition. The crate links no C library.
@@ -94,7 +94,7 @@ documentation on [docs.rs](https://docs.rs/rust-airplay).
 
 ## Status
 
-Version 0.1.0. The public API is the one this release documents; a breaking change before 1.0
+Version 0.2.0. The public API is the one this release documents; a breaking change before 1.0
 is possible but not planned. Version 1.0 is the point where the API is frozen and the backend
 can be published beside this crate.
 

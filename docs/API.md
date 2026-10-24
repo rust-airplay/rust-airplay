@@ -214,7 +214,7 @@ legitimate choice.
 
 ## Versioning
 
-Version 0.1.0. The public API is what this release documents; a breaking change before 1.0 is
+Version 0.2.0. The public API is what this release documents; a breaking change before 1.0 is
 possible and is noted in the changelog. The crate is GPL-3.0-or-later.
 
 [`receiver`]: https://docs.rs/rust-airplay/latest/rust_airplay/receiver/index.html
