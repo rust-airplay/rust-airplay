@@ -730,9 +730,10 @@ impl RouteHandler for RouteHandlers {
         if matches!(
             route,
             Route::SetParameter | Route::GetParameter | Route::Flush
-        ) && let Some(challenge) = self.digest_challenge(request)
-        {
-            return Some(challenge);
+        ) {
+            if let Some(challenge) = self.digest_challenge(request) {
+                return Some(challenge);
+            }
         }
         match route {
             Route::Feedback => Some(self.feedback_reply()),

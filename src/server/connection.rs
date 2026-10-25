@@ -114,9 +114,7 @@ pub(super) async fn serve<H: RouteHandler>(
         // by whichever deadline is nearer, because a socket that stays silent would
         // otherwise keep this loop asleep past the feedback timeout.
         let mut wait = deadline - now;
-        if let Some((timeout, clock)) = &feedback_deadline
-            && let Some(clock) = clock
-        {
+        if let Some((timeout, Some(clock))) = &feedback_deadline {
             let quiet =
                 now_millis().saturating_sub(clock.load(std::sync::atomic::Ordering::Relaxed));
             let limit = timeout.as_millis() as u64;

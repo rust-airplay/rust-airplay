@@ -1631,14 +1631,15 @@ where
             // A mirror stream has to come from the host whose control connection owns
             // the session; the keys are not a reason to let a second host on the
             // network put frames into the renderer.
-            if let Some(expected) = mirror_peer.lock().ok().and_then(|peer| *peer)
-                && stream.peer_addr().ip() != expected
-            {
-                log::warn!(
-                    "rust-airplay: refused a mirror connection from {} (session peer {expected})",
-                    stream.peer_addr()
-                );
-                continue;
+            if let Some(expected) = mirror_peer.lock().ok().and_then(|peer| *peer) {
+                if stream.peer_addr().ip() != expected {
+                    log::warn!(
+                        "rust-airplay: refused a mirror connection from {} \
+                         (session peer {expected})",
+                        stream.peer_addr()
+                    );
+                    continue;
+                }
             }
             let mut session = match crate::media::mirror::MirrorSession::new(&keys) {
                 Ok(session) => session,
@@ -1731,10 +1732,11 @@ where
                         let wanted = pacer.due(timestamp, arrival);
                         let due = pacer.due_limited(timestamp, arrival, MAX_LEAD);
                         let mut waited = 0;
-                        if pace_video && let Some(wait) = crate::media::pace::Pacer::wait(due, now)
-                        {
-                            std::thread::sleep(wait);
-                            waited = wait.as_millis();
+                        if pace_video {
+                            if let Some(wait) = crate::media::pace::Pacer::wait(due, now) {
+                                std::thread::sleep(wait);
+                                waited = wait.as_millis();
+                            }
                         }
                         if shown < 40 || shown % 120 == 0 {
                             log::info!(
@@ -1798,20 +1800,23 @@ where
                         // When the receiver is not pacing the stream itself, the backend
                         // gets the spacing the stream is arriving at and can schedule its
                         // own waits. The first frame has no interval to report.
-                        if !pace_video && let Some(previous) = previous_timestamp {
-                            let ticks = timestamp.wrapping_sub(previous);
-                            let seconds = if ticks > u64::MAX / 2 {
-                                0.0
-                            } else {
-                                ticks as f64 / 4_294_967_296.0
-                            };
-                            if let Err(error) = video.set_pace(seconds)
-                                && !pace_reported
-                            {
-                                pace_reported = true;
-                                log::warn!(
-                                    "rust-airplay: the video stream would not take a pace: {error}"
-                                );
+                        if !pace_video {
+                            if let Some(previous) = previous_timestamp {
+                                let ticks = timestamp.wrapping_sub(previous);
+                                let seconds = if ticks > u64::MAX / 2 {
+                                    0.0
+                                } else {
+                                    ticks as f64 / 4_294_967_296.0
+                                };
+                                if let Err(error) = video.set_pace(seconds) {
+                                    if !pace_reported {
+                                        pace_reported = true;
+                                        log::warn!(
+                                            "rust-airplay: the video stream would not take a pace: \
+                                             {error}"
+                                        );
+                                    }
+                                }
                             }
                         }
                         previous_timestamp = Some(timestamp);
@@ -2186,14 +2191,15 @@ where
                             Some(std::net::SocketAddr::new(address.ip(), port));
                     }
                     for stream in &request.streams {
-                        if stream.kind == 96
-                            && let Some(codec) = stream
+                        if stream.kind == 96 {
+                            if let Some(codec) = stream
                                 .compression_type
                                 .and_then(AudioCodec::from_compression_type)
-                        {
-                            let spf = stream.samples_per_frame.unwrap_or(480);
-                            if let Ok(mut slot) = declared.lock() {
-                                *slot = Some((codec, spf));
+                            {
+                                let spf = stream.samples_per_frame.unwrap_or(480);
+                                if let Ok(mut slot) = declared.lock() {
+                                    *slot = Some((codec, spf));
+                                }
                             }
                         }
                     }

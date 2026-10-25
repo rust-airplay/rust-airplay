@@ -39,6 +39,8 @@
   a second connection reads what the first set.
 - `SetupRequest::debug_body` is off unless `Config::debug_setup_body` asks for it.
 - The plist fixture's `ct` is 2 (ALAC), matching the code and upstream UxPlay.
+- The 1.85 minimum is true again: the `let` chains in the control, feedback and mirror
+  paths are rewritten as nested conditions, which is what the new MSRV CI job checks.
 
 ### Changed
 
