@@ -57,6 +57,11 @@
   session), `server::handlers` (types, routes) and `server::pairing` (state, session). The
   small test files are inline, so no `src` directory contains only a `tests.rs`. Public
   paths are unchanged.
+- The next tier is split too: `receiver` (config, state, runtime, serve), `media::audio`
+  (packet, session, reorder), `media::ports` (sockets, mirror), `render` (codec, volume,
+  frames, traits, null), `control` (route, dispatch, types, session), `media::timing`
+  (request, clock) and `server::handlers::routes` (setup, parameters, info, pairing,
+  helpers). Public paths are unchanged; `receiver::serve` remains one orchestration file.
 
 ### Added
 
