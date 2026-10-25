@@ -1,13 +1,12 @@
-// SPDX-License-Identifier: LGPL-2.1-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! FairPlay PlayFair helper primitives.
 //!
 //! The implementation follows the table and byte-order conventions of FairPlay while
 //! keeping all memory access bounded and explicit in Rust.
 //!
-//! Translated from,
-//! `modified_md5.c`, `playfair.c` and `sap_hash.c`; those the protocol files carry
-//! no per-file header, so they keep the same LGPL-2.1-or-later notice as the
-//! FairPlay framing translation. See `THIRD_PARTY_NOTICES.md`.
+//! Translated from `modified_md5.c`, `playfair.c` and `sap_hash.c` in
+//! EstebanKubata's PlayFair library, as carried by UxPlay. See
+//! `THIRD_PARTY_NOTICES.md` for the source revision and upstream licence.
 
 #![allow(dead_code)]
 

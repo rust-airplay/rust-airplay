@@ -1,23 +1,32 @@
 # Provenance and third-party notices
 
-This project is licensed under GPL-3.0-or-later. Parts of it are translations of
-GPL-3.0-or-later and LGPL-2.1-or-later sources, and those parts keep the licence of the source
-they came from.
+This project is licensed under GPL-3.0-or-later. Every source file in the repository carries
+that SPDX identifier, and the published crate is distributed under those terms. Parts of the
+code are translations of earlier free-software sources; their provenance is recorded below.
 
 ## Translated sources
 
 The FairPlay framing constants, PlayFair table assets and the FairPlay transforms are
-translations of GPL/LGPL-licensed C sources, including `omg_hax.c`, `modified_md5.c`,
-`playfair.c`, `sap_hash.c` and `hand_garble.c`. The original `fairplay_playfair.c` carries the
-LGPL-2.1-or-later notice of Juho Vähä-Herttua; the `playfair/` files carry no per-file header, so
-their Rust translations (`src/playfair.rs`, `src/playfair_tables.rs`,
-`src/playfair/hand_garble_generated.rs`) use the same LGPL-2.1-or-later notice. Each translated
-file keeps the applicable SPDX identifier.
+translations of the following C sources:
+
+| Rust translation | Upstream source | Copyright | Upstream licence |
+| --- | --- | --- | --- |
+| `src/playfair.rs` | `modified_md5.c`, `playfair.c`, `sap_hash.c` in `lib/playfair` of [UxPlay](https://github.com/FDH2/UxPlay) | EstebanKubata, PlayFair | GPL-3.0 |
+| `src/playfair_tables.rs` | `omg_hax.h`, same directory | EstebanKubata, PlayFair | GPL-3.0 |
+| `src/playfair/hand_garble_generated.rs` | `hand_garble.c`, same directory | EstebanKubata, PlayFair | GPL-3.0 |
+| `src/fairplay.rs` | `lib/fairplay_playfair.c` in UxPlay | Juho Vähä-Herttua, 2018 | LGPL-2.1-or-later |
+| `src/fairplay_tables.rs` | constants from `lib/fairplay_playfair.c` | Juho Vähä-Herttua, 2018 | LGPL-2.1-or-later |
+
+The UxPlay checkout used as the reference is commit `517cbb1` (2026-10-22); the PlayFair library
+is also published at [EstebanKubata/playfair](https://github.com/EstebanKubata/playfair). The two
+fairplay translations derive from an LGPL-2.1-or-later source and are distributed here under
+GPL-3.0-or-later, which that licence permits (LGPL-2.1-or-later, section 3); the original
+copyright notices above are retained.
 
 The receiver's wire behaviour - discovery records, RTSP routes, RTP framing, the mirror
 keystream, pairing and the timing exchange - was established from the behaviour of an existing
-GPL AirPlay receiver. Those implementations are not vendored here and are not linked into this
-crate; what is derived from them is the protocol contract, recorded in the tests.
+GPL AirPlay receiver. That reference checkout is not part of the repository history or the
+published crate; what is derived from it is the protocol contract, recorded in the tests.
 
 Retain the original copyright and licence notices when translating or incorporating another
 source. Record the source files and notices here before such a change.

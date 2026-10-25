@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! When a frame of a session should play.
 //!
 //! The two streams a session carries do not share a timestamp domain, and a device session

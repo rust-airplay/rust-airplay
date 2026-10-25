@@ -78,6 +78,6 @@ API 参考是源码构建出的 rustdoc：`cargo doc --open`，或 [docs.rs](htt
 
 ## 许可证
 
-GPL-3.0-or-later，因为其中部分是 GPL 与 LGPL 源码的翻译。链接本 crate 的程序受同一许可证约束；见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+GPL-3.0-or-later。其中部分是早期自由软件源码的翻译，来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。链接本 crate 的程序受同一许可证约束；见 [LICENSE](LICENSE)。
 
 English: [README.md](README.md)。

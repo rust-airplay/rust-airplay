@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The clock exchange, over real sockets.
 //!
 //! The arithmetic has unit tests; this checks the half that is not arithmetic. A request

@@ -1,5 +1,6 @@
-// SPDX-License-Identifier: LGPL-2.1-or-later
-//! FairPlay setup constants generated from .
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! FairPlay setup constants generated from `fairplay_playfair.c`
+//! (Copyright (C) 2018 Juho Vähä-Herttua). See `THIRD_PARTY_NOTICES.md`.
 
 pub const FP_HEADER: [u8; 12] = [
     0x46, 0x50, 0x4c, 0x59, 0x03, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00, 0x14,

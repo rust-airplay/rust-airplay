@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-2.1-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! FairPlay `/fp-setup` framing, and the state a connection keeps between its two steps.
 //!
 //! A client that wants its stream encrypted first asks the receiver for a FairPlay setup
@@ -6,6 +6,9 @@
 //! only then sends the 72-byte encrypted key from which the media AES key is decrypted. This
 //! module validates those three messages and keeps the handshake message between them; the
 //! PlayFair transform itself lives in this crate's private `playfair` module.
+//!
+//! Translated from `fairplay_playfair.c` in UxPlay, Copyright (C) 2018
+//! Juho Vähä-Herttua. See `THIRD_PARTY_NOTICES.md` for the upstream licence.
 //!
 //! The replies are fixed for the receiver's own key material, which is why this is a small
 //! state machine rather than a cipher implementation.

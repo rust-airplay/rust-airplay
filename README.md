@@ -101,8 +101,8 @@ is possible but not planned. Version 1.0 is the point where the API is frozen.
 
 ## Licence
 
-GPL-3.0-or-later, because parts of it are translations of GPL and LGPL sources. A program that
-links this crate is bound by the same licence; see [LICENSE](LICENSE) and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+GPL-3.0-or-later. Parts of it are translations of earlier free-software sources; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for their provenance. A program that links this
+crate is bound by the same licence; see [LICENSE](LICENSE).
 
 中文：[README.zh-CN.md](README.zh-CN.md)。

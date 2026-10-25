@@ -81,10 +81,11 @@
 //!
 //! # Licence
 //!
-//! GPL-3.0-or-later, because parts of it are translations of GPL and LGPL sources. A program
-//! that links this crate is bound by the same licence; see the repository's
-//! [README](https://github.com/rust-airplay/rust-airplay#readme) and
-//! [THIRD_PARTY_NOTICES](https://github.com/rust-airplay/rust-airplay/blob/main/THIRD_PARTY_NOTICES.md).
+//! GPL-3.0-or-later. Parts of it are translations of earlier free-software sources; see the
+//! repository's [README](https://github.com/rust-airplay/rust-airplay#readme) and
+//! [THIRD_PARTY_NOTICES](https://github.com/rust-airplay/rust-airplay/blob/main/THIRD_PARTY_NOTICES.md)
+//! for their provenance and the licence terms. A program that links this crate is bound by the
+//! same licence.
 //!
 //! # See also
 //!

@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: LGPL-2.1-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The FairPlay hand garbling transform.
 //!
 //! Buffers use `i128` slots to model C's integer promotions; each write is truncated to one
 //! byte exactly as an `unsigned char` assignment.
+//!
+//! Translated from `hand_garble.c` in EstebanKubata's PlayFair library. See
+//! `THIRD_PARTY_NOTICES.md` for the source revision and upstream licence.
 //!
 //! Comments inside the translated body are the protocol author's, kept verbatim so the
 //! transcription stays checkable against its source. They are not this project's voice.

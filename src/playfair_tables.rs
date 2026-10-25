@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #![allow(dead_code)]
-// SPDX-License-Identifier: LGPL-2.1-or-later
-//! Generated from /lib/playfair/omg_hax.h.
-//! Keep the source snapshot and license with the migration repository.
+//! Generated from `omg_hax.h` in EstebanKubata's PlayFair library.
+//! See `THIRD_PARTY_NOTICES.md` for the source revision and upstream licence.
 
 pub const MESSAGE_KEY: &[u8] = &[
     0x1D, 0x24, 0x03, 0x40, 0xDC, 0xAE, 0xC7, 0xA8, 0x26, 0x7C, 0x20, 0x99, 0x5D, 0x7E, 0x89, 0x2E,
