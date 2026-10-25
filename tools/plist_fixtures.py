@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Regenerate the plist fixtures used by crates/airplay-core/tests/plist_spec.rs.
+"""Regenerate the plist fixtures used by tests/plist_spec.rs.
 
 The fixtures are written by CPython's plistlib, not by the `plist` crate, so the
 Rust parser is checked against an independent implementation of the binary plist
@@ -26,7 +26,7 @@ import plistlib
 import sys
 from pathlib import Path
 
-FIXTURE_DIR = Path(__file__).resolve().parent.parent / "crates/airplay-core/tests/fixtures"
+FIXTURE_DIR = Path(__file__).resolve().parent.parent / "tests/fixtures"
 
 # A 64-bit stream connection id: real clients pick these at random, so the
 # value deliberately exceeds i64::MAX to pin the unsigned-integer path.
@@ -42,7 +42,7 @@ SETUP_REQUEST = {
         {
             "type": 96,
             "controlPort": 6100,
-            "ct": 1,
+            "ct": 2,
             "spf": 352,
             "audioFormat": 0x40000,
             "isMedia": False,

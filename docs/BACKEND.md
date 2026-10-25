@@ -98,8 +98,11 @@ drops frames the rest of the stream depends on, and the picture stays partly wro
 
 The receiver therefore offers two hooks:
 
-- `VideoStream::set_pace(seconds)`, called before a frame with the interval until the next
-  one. The default does nothing; a backend with a clock can sleep or schedule.
+- `VideoStream::set_pace(seconds)`, called before a frame with the interval since the
+  previous one, which is the spacing the stream has been arriving at. The default does
+  nothing; a backend with a clock can sleep or schedule. It is only called when
+  `Config::pace_video` is off, because when that is on the receiver does the waiting
+  itself.
 - `Config::pace_video`, which asks the receiver itself to hold each frame back before
   calling `push`. It is off by default: a mirror is judged by how quickly the picture follows
   the device, and pacing spends latency to buy smoothness.
@@ -227,6 +230,16 @@ Two things the example does not need and a real backend does:
 
 - **A clock.** Frames arrive with timestamps; a player turns those into presentation times.
 - **A device.** A sink, a window, or both; where they come from is the backend's business.
+
+### Audio and video together
+
+The two timestamps count different clocks: audio counts samples at the stream's rate from a
+random RTP origin, while video counts NTP fixed point in the client's own epoch. The receiver
+anchors each stream at the arrival of its first frame and paces it by its own rate; it does
+not hand the backend a shared local time base. A backend that plays both has to build one
+from the two streams (their first frames are captured together and arrive within a network's
+width) or accept that lip sync is its own problem. This is a documented limit, not a hidden
+one: the crate will not pretend that two arbitrary origins are one clock.
 
 `NullRenderer` is the other end of the range: it accepts everything, counts frames, and plays
 nothing. It exists so a session can run end to end without a media library, and so a

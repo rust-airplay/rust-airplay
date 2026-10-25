@@ -327,12 +327,23 @@ pub fn parse_header(datagram: &[u8]) -> Result<MirrorHeader, MirrorError> {
 }
 
 /// The key and IV of one mirror stream.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StreamKeys {
     /// AES-128-CTR key of the stream.
     pub key: [u8; STREAM_KEY_LEN],
     /// AES-128-CTR initial counter block of the stream.
     pub iv: [u8; STREAM_KEY_LEN],
+}
+
+impl std::fmt::Debug for StreamKeys {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The key and counter block are the whole secret of the stream.
+        formatter
+            .debug_struct("StreamKeys")
+            .field("key", &"<redacted>")
+            .field("iv", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Derives the keys of the mirror stream a client identified with

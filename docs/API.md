@@ -76,7 +76,7 @@ path decision and prints nothing; the only files it opens are the ones a caller 
 | `seed` | `[u8; 32]` | the secret every identity key derives from; the same seed keeps a receiver recognisable across restarts |
 | `device_id` | `Option<String>` | hardware address to advertise. Derived from the seed when `None` |
 | `pin` | `PinMode` | `Disabled`, `OneTime`, or `Fixed(digits)`. The PIN is reported through `on_pin` |
-| `password` | `Option<String>` | when set, `SETUP` also requires this digest password |
+| `password` | `Option<String>` | when set, `SETUP` and the routes that change or read the session's parameters (`SET_PARAMETER`, `GET_PARAMETER`, `FLUSH`) also require this digest password |
 | `audio_codec` | `AudioCodec` | the coding used when a client never states its `ct` in `SETUP`; a declaration always wins |
 | `renderer` | `Arc<dyn Renderer>` | what plays the media |
 | `clients` | `Arc<Mutex<HashSet<[u8; 32]>>>` | client keys already verified. Read at startup, added to as clients are verified. With a PIN configured the list also decides whether a client may verify without pairing again; with the PIN disabled the legacy setup is the only way in, so the list is a record only |
@@ -233,5 +233,10 @@ legitimate choice.
 
 Version 0.2.0. The public API is what this release documents; a breaking change before 1.0 is
 possible and is noted in the changelog. The crate is GPL-3.0-or-later.
+
+Growth-prone public types - `Config`, `ServerConfig`, `SetupRequest`, the codec enums,
+`RenderError`, `PinMode` and `SessionAuth` - are `#[non_exhaustive]`: construct them through
+their constructors or defaults and match the enums with a wildcard arm. That is what lets a
+later release add a field or a variant without breaking a caller.
 
 [`receiver`]: https://docs.rs/rust-airplay/latest/rust_airplay/receiver/index.html

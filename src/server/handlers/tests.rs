@@ -2,6 +2,7 @@
 //! Tests for the route handlers.
 use super::*;
 use crate::wire::{MessageHead, parse_request_head};
+use std::sync::{Arc, Mutex};
 
 /// Parses `method target` plus `extra` headers and `body` the way the control
 /// layer does, and returns the head with the body slice the handler sees.
@@ -493,4 +494,75 @@ fn reads_a_positive_or_fractional_identifier_the_way_a_client_wrote_it() {
     let mut bare = plist::Dictionary::new();
     bare.insert("type".to_owned(), 110u64.into());
     assert_eq!(super::stream_connection_id(&bare), None);
+}
+
+#[test]
+fn setup_request_debug_redacts_key_material() {
+    let request = SetupRequest {
+        audio_key: Some([0xab; 16]),
+        audio_iv: Some([0xcd; 16]),
+        streams: Vec::new(),
+        client_timing_port: None,
+        client_address: None,
+        debug_body: Some("key abababab".to_owned()),
+        keys: Vec::new(),
+        client_identity: None,
+        authentication: SessionAuth::None,
+    };
+    let debug = format!("{request:?}");
+    assert!(!debug.contains("abababab"), "{debug}");
+    assert!(!debug.contains("cdcd"), "{debug}");
+    assert!(debug.contains("redacted"), "{debug}");
+    assert!(debug.contains("<12 bytes>"), "{debug}");
+}
+
+#[test]
+fn setup_reports_its_body_only_when_enabled() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut handlers = RouteHandlers::new(DeviceIdentity::default());
+    let captured = Arc::clone(&seen);
+    handlers.set_setup_callback(move |request| {
+        captured.lock().expect("lock").push(request.debug_body);
+    });
+    let mut streams = plist::Dictionary::new();
+    streams.insert("type".to_owned(), 110u64.into());
+    let mut body = plist::Dictionary::new();
+    body.insert(
+        "streams".to_owned(),
+        plist::Value::Array(vec![plist::Value::Dictionary(streams)]),
+    );
+    let encoded = Plist::from_value(plist::Value::Dictionary(body))
+        .encode_binary()
+        .expect("a body");
+    let (head, body) = parse(
+        "SETUP /stream",
+        "CSeq: 1\r\nContent-Type: application/x-apple-binary-plist\r\n",
+        &encoded,
+    );
+    let request = RouteRequest {
+        head: &head,
+        body: &body,
+        peer: None,
+    };
+    assert_eq!(handlers.setup(&request).status, 200);
+    assert_eq!(
+        seen.lock().expect("lock").len(),
+        1,
+        "the callback runs for every setup"
+    );
+    assert_eq!(
+        seen.lock().expect("lock").first().cloned().flatten(),
+        None,
+        "the body is not reported by default"
+    );
+
+    handlers.set_debug_body(true);
+    assert_eq!(handlers.setup(&request).status, 200);
+    assert!(
+        seen.lock().expect("lock")[1]
+            .as_deref()
+            .is_some_and(|body| body.contains("streams: array(1)")),
+        "an enabled receiver reports the shape of the body: {:?}",
+        seen.lock().expect("lock")
+    );
 }

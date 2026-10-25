@@ -73,6 +73,21 @@ const MAX_SETUP_PIN_ATTEMPTS: usize = MAX_PIN_FAILURES as usize + 1;
 /// that opening a new connection does not reset it.
 pub const MAX_PIN_FAILURES: u32 = 5;
 
+/// How long a PIN is refused after the failure bound is reached.
+///
+/// The protocol counts nothing, so a fixed PIN can be guessed online until it is found;
+/// an unbounded guess is also what would let one unauthenticated peer spend the
+/// receiver's modular exponentiations forever. A bounded window keeps guessing
+/// expensive without making the receiver unusable until a restart.
+pub const PIN_LOCKOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Refused PIN proofs, and the moment this receiver is willing to try one again.
+#[derive(Debug, Default)]
+struct PinFailures {
+    count: u32,
+    blocked_until: Option<std::time::Instant>,
+}
+
 /// Refused password digests a receiver tolerates before it stops answering
 /// challenges.
 ///
@@ -135,6 +150,7 @@ impl RandomSource for OsRandom {
 }
 
 /// How a receiver treats the PIN of the modern pairing flow.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PinMode {
     /// Pairing with a PIN is refused.
@@ -162,8 +178,9 @@ pub struct PairingState {
     password: Option<Vec<u8>>,
     password_failures: Mutex<PasswordFailures>,
     password_lockout: std::time::Duration,
+    pin_failures: Mutex<PinFailures>,
+    pin_lockout: std::time::Duration,
     pending_pin: Mutex<Option<u16>>,
-    failures: Mutex<u32>,
     random: Mutex<Box<dyn RandomSource>>,
     client_registered: Option<ClientRegisteredCheck>,
 }
@@ -188,8 +205,9 @@ impl PairingState {
             password: None,
             password_failures: Mutex::new(PasswordFailures::default()),
             password_lockout: PASSWORD_LOCKOUT,
+            pin_failures: Mutex::new(PinFailures::default()),
+            pin_lockout: PIN_LOCKOUT,
             pending_pin: Mutex::new(None),
-            failures: Mutex::new(0),
             random: Mutex::new(random),
             client_registered: None,
         }
@@ -213,6 +231,16 @@ impl PairingState {
     /// client cannot get in after an attack.
     pub fn with_password_lockout(mut self, window: std::time::Duration) -> Self {
         self.password_lockout = window;
+        self
+    }
+
+    /// Sets how long PIN attempts are refused after the failure bound.
+    ///
+    /// The default is 30 seconds. It applies to a fixed PIN and to a one-time PIN, and a
+    /// new one-time PIN does not clear it: otherwise asking for a fresh PIN would be a
+    /// way to reset the guess counter.
+    pub fn with_pin_lockout(mut self, window: std::time::Duration) -> Self {
+        self.pin_lockout = window;
         self
     }
 
@@ -362,8 +390,22 @@ impl PairingState {
         Err(PairingError::Random)
     }
 
+    /// Whether a PIN attempt is allowed, clearing an expired lockout.
+    fn pin_allowed(&self) -> Result<(), PairingError> {
+        let mut failures = self.guard(&self.pin_failures);
+        if let Some(until) = failures.blocked_until {
+            if std::time::Instant::now() < until {
+                return Err(PairingError::AuthenticationFailed);
+            }
+            failures.count = 0;
+            failures.blocked_until = None;
+        }
+        Ok(())
+    }
+
     /// PIN the next setup step has to be answered with.
     fn pin_for_setup(&self) -> Result<[u8; 4], PairingError> {
+        self.pin_allowed()?;
         match self.pin_mode {
             PinMode::Disabled => Err(PairingError::PinUnavailable),
             PinMode::Fixed(pin) => Ok(digits(pin)),
@@ -378,6 +420,7 @@ impl PairingState {
 
     /// Starts a PIN exchange and returns the PIN a user has to enter.
     fn start_pin(&self) -> Result<[u8; 4], PairingError> {
+        self.pin_allowed()?;
         match self.pin_mode {
             PinMode::Disabled => Err(PairingError::PinUnavailable),
             PinMode::Fixed(pin) => Ok(digits(pin)),
@@ -390,7 +433,6 @@ impl PairingState {
                     None => {
                         let pin = self.random_pin()?;
                         *pending = Some(pin);
-                        *self.guard(&self.failures) = 0;
                         pin
                     }
                 };
@@ -401,16 +443,19 @@ impl PairingState {
 
     /// Counts one refused proof, dropping a one-time PIN at the bound.
     fn record_failure(&self) {
-        let mut failures = self.guard(&self.failures);
-        *failures += 1;
-        if *failures >= MAX_PIN_FAILURES {
+        let mut failures = self.guard(&self.pin_failures);
+        failures.count += 1;
+        if failures.count >= MAX_PIN_FAILURES {
+            failures.blocked_until = Some(std::time::Instant::now() + self.pin_lockout);
             *self.guard(&self.pending_pin) = None;
         }
     }
 
     /// Clears the failure count and consumes a one-time PIN.
     fn record_success(&self) {
-        *self.guard(&self.failures) = 0;
+        let mut failures = self.guard(&self.pin_failures);
+        failures.count = 0;
+        failures.blocked_until = None;
         *self.guard(&self.pending_pin) = None;
     }
 }
@@ -540,6 +585,7 @@ pub(crate) enum PairingReply {
 /// proves that the peer holds the keys it presented, so a caller that needs an
 /// access decision asks its own registry (see
 /// [`PairingState::with_client_registered`]) or the password gate of `SETUP`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionAuth {
     /// The connection authenticated nothing.

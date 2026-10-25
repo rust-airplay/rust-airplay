@@ -66,7 +66,7 @@ rust_airplay::run(config).await?;
 | `seed` | `[u8; 32]` | 所有身份密钥派生的秘密；同一种子让接收端跨重启保持可识别 |
 | `device_id` | `Option<String>` | 要广播的硬件地址；`None` 时从种子派生 |
 | `pin` | `PinMode` | `Disabled`、`OneTime` 或 `Fixed(数字)`。PIN 通过 `on_pin` 报告 |
-| `password` | `Option<String>` | 设置后 `SETUP` 还要校验 digest 口令 |
+| `password` | `Option<String>` | 设置后 `SETUP` 以及会改变或读取会话参数的 `SET_PARAMETER`、`GET_PARAMETER`、`FLUSH` 都要校验 digest 口令 |
 | `audio_codec` | `AudioCodec` | 客户端从未在 `SETUP` 中声明 `ct` 时使用的编码；有声明时以声明为准 |
 | `renderer` | `Arc<dyn Renderer>` | 由什么播放媒体 |
 | `clients` | `Arc<Mutex<HashSet<[u8; 32]>>>` | 已验证的客户端密钥；启动时读取，验证通过时追加。配置 PIN 时这张表还决定客户端能否免配对直接 verify；PIN 关闭时 legacy setup 是唯一入口，此表只作记录 |
@@ -214,6 +214,8 @@ H.264——而且在第一帧之前就已知，因为客户端的 codec 包先�
 ## 版本
 
 版本 0.2.0。公开 API 就是本版本所记录的这一套；1.0 之前的破坏性变更有可能，并会记录在变更日志。
-许可证为 GPL-3.0-or-later。
+会增长的公开类型——`Config`、`ServerConfig`、`SetupRequest`、编码枚举、`RenderError`、`PinMode`
+与 `SessionAuth`——都标了 `#[non_exhaustive]`：通过构造器或默认值创建它们，匹配枚举时保留通配
+分支。这样后续版本增加字段或变体就不会破坏调用方。许可证为 GPL-3.0-or-later。
 
 [`receiver`]: https://docs.rs/rust-airplay/latest/rust_airplay/receiver/index.html

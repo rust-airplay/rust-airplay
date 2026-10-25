@@ -20,11 +20,47 @@
   transient error is counted and the receive loop continues.
 - `Config::bind` and `Config::advertise` let a receiver listen on `127.0.0.1` without
   registering mDNS, which is what a test and a single-machine receiver need.
+- `FLUSH` is served by the route handler instead of answered `501` by the control layer,
+  so the reorder window is flushed and the renderer's `AudioStream::flush` is called;
+  `VideoStream::set_pace` is called with the measured frame interval.
+- A lost audio packet is asked for again: `controlPort` is read from `SETUP`, a gap in
+  the reorder window produces a resend request on the control socket, and the answer
+  fills the gap.
+- Media datagrams are accepted only from the host that owns the session, a mirror TCP
+  connection must come from that host, and a mirror connection that sends nothing is
+  dropped after ten seconds.
+- A configured password now guards `SET_PARAMETER`, `GET_PARAMETER` and `FLUSH`, not only
+  `SETUP`.
+- A fixed or one-time PIN is refused for a bounded window after five wrong proofs, and
+  asking for a new one-time PIN no longer resets the count.
+- `Debug` on `SetupRequest`, `StreamKeys`, `AudioSession`, the audio and video frames,
+  `DigestAuthorization` and `FairPlaySession` prints sizes and redacts the material.
+- The client volume is shared by every connection of a receiver, so a `GET_PARAMETER` on
+  a second connection reads what the first set.
+- `SetupRequest::debug_body` is off unless `Config::debug_setup_body` asks for it.
+- The plist fixture's `ct` is 2 (ALAC), matching the code and upstream UxPlay.
+
+### Changed
+
+- `Config`, `ServerConfig`, `SetupRequest`, `AudioCodec`, `VideoCodec`, `RenderError`,
+  `PinMode` and `SessionAuth` are `#[non_exhaustive]`: a later release can add a field or
+  a variant without a breaking change. Build the configuration types through their
+  constructors or defaults.
+- CI checks the crate on the minimum supported Rust, and `BUILD.md` describes the CI that
+  exists instead of saying there is none.
+- `BACKEND.md` states that audio/video synchronization is not provided: the two
+  timestamps count different clocks, and a backend that plays both builds the shared
+  timeline itself.
 
 ### Added
 
 - `tests/receiver_spec.rs`: two sessions over real sockets, each with its own FairPlay key,
   asserting the decrypted frame, the second audio stream and the released control port.
+  It also covers a missing audio packet, the resend request, the renderer flush and the
+  audio source filter.
+- `MediaSockets::serve_from` and `send_control`, `SetupStream::control_port`,
+  `PairingState::with_pin_lockout`, `RouteHandlers::set_client_volume` and
+  `set_debug_body`, and the `RouteHandler::teardown` hook.
 
 ## 0.2.0
 

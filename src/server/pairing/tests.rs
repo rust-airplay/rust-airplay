@@ -350,7 +350,14 @@ fn setup_pin_refuses_a_wrong_proof_and_bounds_attempts() {
 
 #[test]
 fn a_one_time_pin_survives_a_bounded_number_of_failures() {
-    let shared = state(PinMode::OneTime);
+    let shared = Arc::new(
+        PairingState::with_random(
+            IDENTITY_SEED,
+            PinMode::OneTime,
+            Box::new(FixedRandom::new()),
+        )
+        .with_pin_lockout(std::time::Duration::from_millis(20)),
+    );
     let mut session = PairingSession::new(Arc::clone(&shared));
     session.pin_start().expect("pin start");
     let pin = shared.pending_pin().expect("pending PIN");
@@ -386,9 +393,14 @@ fn a_one_time_pin_survives_a_bounded_number_of_failures() {
             );
         }
     }
-    // The bound is reached: the PIN is dropped and a new one is drawn.
+    // The bound is reached: the PIN is dropped and the lockout holds a new one back.
     assert_eq!(shared.pending_pin(), None);
-    session.pin_start().expect("pin start again");
+    assert!(
+        session.pin_start().is_err(),
+        "a new PIN is refused while blocked"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    session.pin_start().expect("pin start after the window");
     assert!(shared.pending_pin().is_some());
 }
 
@@ -695,6 +707,41 @@ fn a_password_lockout_is_a_window_not_a_permanent_stop() {
             .is_ok()
     );
     assert_eq!(state.password_failures(), 0);
+}
+
+#[test]
+fn a_fixed_pin_locks_out_after_the_failure_bound() {
+    let state = PairingState::new(IDENTITY_SEED, PinMode::Fixed(1234))
+        .with_pin_lockout(std::time::Duration::from_millis(20));
+    for _ in 0..MAX_PIN_FAILURES {
+        state.record_failure();
+    }
+    assert!(
+        matches!(
+            state.pin_for_setup(),
+            Err(PairingError::AuthenticationFailed)
+        ),
+        "a fixed PIN must stop answering after the bound"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert_eq!(
+        state.pin_for_setup().expect("after the window"),
+        digits(1234)
+    );
+}
+
+#[test]
+fn a_new_one_time_pin_does_not_reset_the_failure_count() {
+    let state = PairingState::new(IDENTITY_SEED, PinMode::OneTime)
+        .with_pin_lockout(std::time::Duration::from_millis(20));
+    state.start_pin().expect("a first PIN");
+    for _ in 0..MAX_PIN_FAILURES {
+        state.record_failure();
+    }
+    // Asking for another PIN must not hand an attacker a fresh guess budget.
+    assert!(state.start_pin().is_err());
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    assert!(state.start_pin().is_ok());
 }
 
 #[test]

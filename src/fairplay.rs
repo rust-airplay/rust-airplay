@@ -74,9 +74,21 @@ impl std::error::Error for FairPlayError {}
 ///
 /// The handshake message is kept because the encrypted key cannot be decrypted without it.
 /// One session serves one connection: two clients do not share a FairPlay exchange.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct FairPlaySession {
     key_message: Option<[u8; HANDSHAKE_REQUEST_LEN]>,
+}
+
+impl std::fmt::Debug for FairPlaySession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FairPlaySession")
+            .field(
+                "key_message",
+                &self.key_message.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl FairPlaySession {

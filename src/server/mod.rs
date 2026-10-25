@@ -71,6 +71,7 @@ pub const MAX_CONNECTIONS: usize = 12;
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How a [`Server`] listens and how many clients it serves.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerConfig {
     /// Address to listen on.
@@ -191,10 +192,8 @@ impl Server {
     /// use rust_airplay::server::{DeviceIdentity, Server, ServerConfig, RouteHandlers};
     ///
     /// # async fn serve() -> std::io::Result<()> {
-    /// let config = ServerConfig {
-    /// device: DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Receiver", Vec::new()),
-    /// ..ServerConfig::default()
-    /// };
+    /// let mut config = ServerConfig::default();
+    /// config.device = DeviceIdentity::new("aa:bb:cc:dd:ee:ff", "Receiver", Vec::new());
     /// let server = Server::bind(config).await?;
     /// println!("control service on {}", server.local_addr()?);
     /// server.run(|| RouteHandlers::new(DeviceIdentity::default())).await

@@ -46,11 +46,13 @@ impl log::Log for TestLogger {
 struct RecordingRenderer {
     streams: AtomicUsize,
     frames: Arc<Mutex<Vec<Vec<u8>>>>,
+    flushes: Arc<AtomicUsize>,
 }
 
 #[derive(Debug)]
 struct RecordingStream {
     frames: Arc<Mutex<Vec<Vec<u8>>>>,
+    flushes: Arc<AtomicUsize>,
 }
 
 impl Renderer for RecordingRenderer {
@@ -58,6 +60,7 @@ impl Renderer for RecordingRenderer {
         self.streams.fetch_add(1, Ordering::Relaxed);
         Ok(Box::new(RecordingStream {
             frames: Arc::clone(&self.frames),
+            flushes: Arc::clone(&self.flushes),
         }))
     }
 
@@ -77,6 +80,7 @@ impl AudioStream for RecordingStream {
     }
 
     fn flush(&self) -> Result<(), RenderError> {
+        self.flushes.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -96,6 +100,10 @@ impl RecordingRenderer {
             .expect("frames")
             .iter()
             .any(|frame| frame == expected)
+    }
+
+    fn flushes(&self) -> usize {
+        self.flushes.load(Ordering::Relaxed)
     }
 }
 
@@ -119,11 +127,12 @@ fn request(method: &str, target: &str, body: &[u8], cseq: u32) -> Vec<u8> {
 }
 
 /// The `SETUP` body a client sends: one audio stream and the key it will use.
-fn setup_body(ekey: &[u8; 72], eiv: &[u8; 16], timing_port: u16) -> Vec<u8> {
+fn setup_body(ekey: &[u8; 72], eiv: &[u8; 16], timing_port: u16, control_port: u16) -> Vec<u8> {
     let mut stream = plist::Dictionary::new();
     stream.insert("type".to_owned(), 96u64.into());
     stream.insert("ct".to_owned(), 2u64.into());
     stream.insert("spf".to_owned(), 352u64.into());
+    stream.insert("controlPort".to_owned(), u64::from(control_port).into());
     let mut root = plist::Dictionary::new();
     root.insert("ekey".to_owned(), plist::Value::Data(ekey.to_vec()));
     root.insert("eiv".to_owned(), plist::Value::Data(eiv.to_vec()));
@@ -164,6 +173,15 @@ async fn fairplay_key(client: &mut TcpStream, pending: &mut Vec<u8>, ekey: &[u8;
         .handshake(&handshake)
         .expect("reference handshake");
     reference.decrypt(ekey).expect("reference decrypt")
+}
+
+/// One `FLUSH`, with the sequence the client wants to resume at.
+fn flush_request(next: u16) -> Vec<u8> {
+    format!(
+        "FLUSH /stream RTSP/1.0\r\nCSeq: 3\r\nRTP-Info: seq={next}\r\n\
+         Content-Length: 0\r\n\r\n"
+    )
+    .into_bytes()
 }
 
 /// Reads one complete response, keeping unconsumed bytes in `pending`.
@@ -316,6 +334,11 @@ async fn two_sessions_are_served_and_stop_releases_the_port() {
         .await
         .expect("a timing socket");
     let timing_port = timing.local_addr().expect("a timing address").port();
+    // The client's control port: the receiver sends resend requests to it.
+    let control = UdpSocket::bind(("127.0.0.1", 0))
+        .await
+        .expect("a control socket");
+    let control_port = control.local_addr().expect("a control address").port();
 
     // First session: a FairPlay handshake, a key, one frame encrypted with it.
     let mut client = connect(port).await;
@@ -327,7 +350,7 @@ async fn two_sessions_are_served_and_stop_releases_the_port() {
         .write_all(&request(
             "SETUP",
             "/stream",
-            &setup_body(&ekey, &eiv, timing_port),
+            &setup_body(&ekey, &eiv, timing_port, control_port),
             2,
         ))
         .await
@@ -346,9 +369,52 @@ async fn two_sessions_are_served_and_stop_releases_the_port() {
     send_audio(first_port, key, eiv, 0, &first_frame).await;
     wait_until(|| renderer.saw(&first_frame), "the first frame").await;
 
+    // Sequence 1 is dropped. The receiver has to ask for it on the control port,
+    // and the frames around the gap must be held until the answer arrives.
+    let skipped = [0xC1u8; 32];
+    send_audio(first_port, key, eiv, 2, &skipped).await;
+    let mut resend = [0u8; 8];
+    let length = timeout(Duration::from_secs(2), control.recv(&mut resend))
+        .await
+        .expect("a resend request")
+        .expect("the request datagram");
+    assert_eq!(length, 8, "a resend request is eight bytes");
+    assert_eq!(
+        u16::from_be_bytes([resend[4], resend[5]]),
+        1,
+        "the request names the missing sequence"
+    );
+    assert_eq!(
+        u16::from_be_bytes([resend[6], resend[7]]),
+        1,
+        "one packet is wanted"
+    );
+    let missing = [0xC0u8; 32];
+    send_audio(first_port, key, eiv, 1, &missing).await;
+    wait_until(
+        || renderer.saw(&missing) && renderer.saw(&skipped),
+        "the frames around the gap",
+    )
+    .await;
+
+    // A FLUSH must reach the renderer as well as the reorder window. The writer owns
+    // the stream, so the frame sent after the flush is what lets it see the request.
+    client.write_all(&flush_request(3)).await.expect("flush");
+    let reply = read_response(&mut client, &mut pending, Duration::from_secs(5))
+        .await
+        .expect("a flush reply");
+    assert!(
+        reply.starts_with(b"RTSP/1.0 200"),
+        "{}",
+        String::from_utf8_lossy(&reply)
+    );
+    let after_flush = [0xA3u8; 32];
+    send_audio(first_port, key, eiv, 3, &after_flush).await;
+    wait_until(|| renderer.flushes() >= 1, "the audio flush").await;
+
     // The client tears the session down; the receiver has to release the key.
     client
-        .write_all(&request("TEARDOWN", "/stream", b"", 3))
+        .write_all(&request("TEARDOWN", "/stream", b"", 4))
         .await
         .expect("teardown");
     let _ = read_response(&mut client, &mut pending, Duration::from_secs(5)).await;
@@ -365,7 +431,7 @@ async fn two_sessions_are_served_and_stop_releases_the_port() {
         .write_all(&request(
             "SETUP",
             "/stream",
-            &setup_body(&ekey, &eiv, timing_port),
+            &setup_body(&ekey, &eiv, timing_port, control_port),
             2,
         ))
         .await

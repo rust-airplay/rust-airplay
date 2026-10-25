@@ -144,14 +144,15 @@ pub enum Route {
 impl Route {
     /// Whether this layer answers the route itself.
     ///
-    /// The routes it answers are `OPTIONS`, `RECORD`, `FLUSH`, `TEARDOWN` and `ANNOUNCE`.
-    /// Every other route is offered to the connection's [`RouteHandler`], because those routes
-    /// carry the session's key material and stream requests; a connection without one, or a
-    /// handler that declines, is answered `501 Not Implemented`.
+    /// The routes it answers are `OPTIONS`, `RECORD`, `TEARDOWN` and `ANNOUNCE`.
+    /// Every other route is offered to the connection's [`RouteHandler`], because those
+    /// routes carry the session's key material and stream requests, or act on the media
+    /// session a handler owns; a connection without one, or a handler that declines, is
+    /// answered `501 Not Implemented`.
     pub fn is_local(self) -> bool {
         matches!(
             self,
-            Self::Options | Self::Record | Self::Flush | Self::Teardown | Self::Announce
+            Self::Options | Self::Record | Self::Teardown | Self::Announce
         )
     }
 }

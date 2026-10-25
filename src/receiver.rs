@@ -333,6 +333,7 @@ pub type ClientCallback = Arc<dyn Fn(&[u8; 32]) + Send + Sync>;
 /// config.audio_latency = Duration::from_millis(100);
 /// assert_eq!(config.name, "Living room");
 /// ```
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct Config {
     /// The name clients see in their AirPlay menu.
@@ -357,6 +358,10 @@ pub struct Config {
     /// How a client authenticates.
     pub pin: PinMode,
     /// Digest password, when the caller configured one.
+    ///
+    /// The password gates `SETUP` and the routes that change what is playing or read
+    /// the session's parameters; the advertisement and pairing routes are answered
+    /// without it.
     pub password: Option<String>,
     /// The coding an audio stream is expected to carry, when the client does not say.
     ///
@@ -365,6 +370,11 @@ pub struct Config {
     /// session falls back to when the client never declares one, which is what older
     /// clients did.
     pub audio_codec: AudioCodec,
+    /// Whether a `SETUP` reports its whole body to the setup callback.
+    ///
+    /// Off by default. The body carries the media key, so this is for a diagnostic run:
+    /// a receiver that turns it on hands session material to the program.
+    pub debug_setup_body: bool,
     /// What plays the media.
     pub renderer: Arc<dyn Renderer>,
     /// Clients whose keys a previous run verified.
@@ -502,6 +512,7 @@ impl Config {
             pin: PinMode::OneTime,
             password: None,
             audio_codec: AudioCodec::AacEld,
+            debug_setup_body: false,
             renderer,
             clients: Arc::new(Mutex::new(HashSet::new())),
             on_client: None,
@@ -1077,6 +1088,14 @@ where
     // saw, and the connection that needs it is the one that never had it. That is why
     // this is shared rather than local.
     let session_audio_key: Arc<Mutex<Option<[u8; 16]>>> = Arc::new(Mutex::new(None));
+    // The host the session's control connection came from. The media sockets are bound
+    // to an interface, so this is what keeps a second host on the network from sending
+    // into a session it does not own.
+    let session_peer: Arc<Mutex<Option<std::net::IpAddr>>> = Arc::new(Mutex::new(None));
+    // Where the client receives resend requests for the audio stream, from the
+    // `controlPort` of its `SETUP`. A receiver without it can only wait for the
+    // reorder window to give up on a lost packet.
+    let session_control: Arc<Mutex<Option<std::net::SocketAddr>>> = Arc::new(Mutex::new(None));
     // Where the clock exchange goes: the timing port a client named in its `SETUP`,
     // at the address its control connection came from. The receiver starts that
     // exchange, so a session that never learns this never ticks. A watch channel,
@@ -1098,6 +1117,11 @@ where
     // `FLUSH` reaching any control connection can clear that session's window.
     let audio_flush: Arc<Mutex<Option<crate::media::audio::FlushHandle>>> =
         Arc::new(Mutex::new(None));
+    // The generation a `FLUSH` bumps. The writer owns the renderer's audio stream and
+    // learns about the flush through this counter, the way the video writer learns
+    // through its queue's generation.
+    let audio_flush_generation: Arc<Mutex<Option<Arc<std::sync::atomic::AtomicU64>>>> =
+        Arc::new(Mutex::new(None));
     // The video queue a `FLUSH` has to empty, published by whichever mirror session is
     // running. A receiver has one, so a single slot is enough.
     let video_flush: Arc<Mutex<Option<Arc<FreshestFrames>>>> = Arc::new(Mutex::new(None));
@@ -1109,6 +1133,9 @@ where
     let audio_sockets = Arc::clone(&media);
     let audio_stop = audio_stop.clone();
     let audio_flush_task = Arc::clone(&audio_flush);
+    let audio_flush_generations = Arc::clone(&audio_flush_generation);
+    let audio_peer = Arc::clone(&session_peer);
+    let audio_control = Arc::clone(&session_control);
     let audio_probes = Arc::clone(&probe);
     let declared_audio_task = Arc::clone(&declared_audio);
     tokio::spawn(async move {
@@ -1163,6 +1190,13 @@ where
             if let Ok(mut slot) = audio_flush_task.lock() {
                 *slot = Some(session.flush_handle());
             }
+            // A flush asks the renderer to drop what it has not played. The writer owns
+            // the stream, so it learns about the request through this counter and
+            // through the generation carried with every queued frame.
+            let flush_generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            if let Ok(mut slot) = audio_flush_generations.lock() {
+                *slot = Some(Arc::clone(&flush_generation));
+            }
             // Audio is pushed by a thread of its own, for the same reason video is:
             // writing to a pipeline blocks when the pipeline is full, and a write that
             // blocks inside the receive loop stops everything that loop is watching —
@@ -1174,9 +1208,10 @@ where
             // whatever the pipeline is doing; dropping is counted and reported once, so
             // a pipeline that never recovers is seen rather than buffered away.
             let (feed, queued) =
-                std::sync::mpsc::sync_channel::<crate::AudioFrame>(QUEUED_AUDIO_FRAMES);
+                std::sync::mpsc::sync_channel::<(crate::AudioFrame, u64)>(QUEUED_AUDIO_FRAMES);
             let played = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             let played_writer = std::sync::Arc::clone(&played);
+            let writer_generation = Arc::clone(&flush_generation);
             // The stream is taken out of the `Option` rather than borrowed from it: the
             // writer thread owns it for the life of the session, and a borrowed stream
             // cannot be moved into a thread.
@@ -1191,7 +1226,23 @@ where
                             crate::AudioConfig::default().sample_rate,
                         ));
                     let opened = std::time::Instant::now();
-                    while let Ok(frame) = queued.recv() {
+                    let mut flushed = 0u64;
+                    while let Ok((frame, generation)) = queued.recv() {
+                        let current = writer_generation.load(Ordering::Relaxed);
+                        if generation < current {
+                            // The client flushed while this frame was in the queue:
+                            // the renderer has been told to drop what it held, and this
+                            // frame belongs to what it dropped.
+                            continue;
+                        }
+                        if generation > flushed {
+                            flushed = generation;
+                            if let Err(error) = playing.flush() {
+                                log::warn!(
+                                    "rust-airplay: the audio stream would not flush: {error}"
+                                );
+                            }
+                        }
                         let arrival = opened.elapsed().as_nanos() as u64;
                         let due = pacer.due_limited(frame.timestamp, arrival, MAX_LEAD);
                         if let Some(wait) = crate::media::pace::Pacer::wait(due, arrival) {
@@ -1345,11 +1396,38 @@ where
                 }
             });
             let mut session_watch = keys.clone();
+            let peer = audio_peer.lock().ok().and_then(|peer| *peer);
+            // Resend requests are sent from the control socket asynchronously: the
+            // receive loop cannot wait for a socket write and still drain audio.
+            let (resend_tx, mut resend_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u16>>();
+            let control_sockets = Arc::clone(&audio_sockets);
+            let control_target = Arc::clone(&audio_control);
+            let resend_task = tokio::spawn(async move {
+                let mut control_sequence = 0u16;
+                while let Some(missing) = resend_rx.recv().await {
+                    let Some(target) = control_target.lock().ok().and_then(|target| *target) else {
+                        continue;
+                    };
+                    for sequence in missing {
+                        control_sequence = control_sequence.wrapping_add(1);
+                        let request =
+                            crate::media::control::resend_request(control_sequence, sequence, 1);
+                        if let Err(error) = control_sockets.send_control(target, &request).await {
+                            log::warn!("rust-airplay: cannot send a resend request: {error}");
+                            break;
+                        }
+                    }
+                }
+            });
             let outcome = tokio::select! {
                 _ = stopped(audio_stop.clone()) => Ok(()),
                 _ = session_watch.changed() => Ok(()),
                 result = audio_sockets
-                .serve(&mut session, &received, |frame| {
+                .serve_from(
+                    &mut session,
+                    &received,
+                    peer,
+                    |frame| {
                     use std::sync::atomic::Ordering;
                     let count = frames.fetch_add(1, Ordering::Relaxed) + 1;
                     if count == 1 {
@@ -1375,7 +1453,8 @@ where
                         data: frame.payload,
                         timestamp: u64::from(frame.timestamp),
                     };
-                    if feed.try_send(queued).is_err() {
+                    let generation = flush_generation.load(Ordering::Relaxed);
+                    if feed.try_send((queued, generation)).is_err() {
                         let missed = dropped.fetch_add(1, Ordering::Relaxed) + 1;
                         if missed == 1 {
                             log::warn!(
@@ -1425,6 +1504,8 @@ where
                     } else if seen == 0 {
                         log::debug!("media     timing answer ignored: not an answer to a request");
                     }
+                }, |missing| {
+                    let _ = resend_tx.send(missing.to_vec());
                 })
                 => result,
             };
@@ -1432,6 +1513,7 @@ where
             if let Some(playing) = playing {
                 let _ = playing.join();
             }
+            resend_task.abort();
             log::info!(
                 "media     {} audio frames played of {}, {} dropped",
                 played.load(std::sync::atomic::Ordering::Relaxed),
@@ -1471,6 +1553,7 @@ where
     let mirror_renderer = Arc::clone(&renderer);
     let mirror_stop = stopping.clone();
     let mirror_probe = Arc::clone(&probe);
+    let mirror_peer = Arc::clone(&session_peer);
     let pace_video = config.pace_video;
     let log_reports = config.log_streaming_reports;
     let on_artwork = config.on_artwork.clone();
@@ -1545,6 +1628,18 @@ where
                 usize::from(pending.is_some())
             );
             let keys = current;
+            // A mirror stream has to come from the host whose control connection owns
+            // the session; the keys are not a reason to let a second host on the
+            // network put frames into the renderer.
+            if let Some(expected) = mirror_peer.lock().ok().and_then(|peer| *peer)
+                && stream.peer_addr().ip() != expected
+            {
+                log::warn!(
+                    "rust-airplay: refused a mirror connection from {} (session peer {expected})",
+                    stream.peer_addr()
+                );
+                continue;
+            }
             let mut session = match crate::media::mirror::MirrorSession::new(&keys) {
                 Ok(session) => session,
                 Err(error) => {
@@ -1597,6 +1692,10 @@ where
                     // the one on screen; the writer is where that reaches the renderer.
                     let mut flushed = queued.generation();
                     let mut paused = false;
+                    // The interval between the last two frames is the stream's capture
+                    // spacing; it is what a backend that paces itself needs to know.
+                    let mut previous_timestamp: Option<u64> = None;
+                    let mut pace_reported = false;
                     while let Some((data, timestamp, idr, received, codec, geometry)) =
                         queued.take()
                     {
@@ -1696,6 +1795,26 @@ where
                                 );
                             }
                         }
+                        // When the receiver is not pacing the stream itself, the backend
+                        // gets the spacing the stream is arriving at and can schedule its
+                        // own waits. The first frame has no interval to report.
+                        if !pace_video && let Some(previous) = previous_timestamp {
+                            let ticks = timestamp.wrapping_sub(previous);
+                            let seconds = if ticks > u64::MAX / 2 {
+                                0.0
+                            } else {
+                                ticks as f64 / 4_294_967_296.0
+                            };
+                            if let Err(error) = video.set_pace(seconds)
+                                && !pace_reported
+                            {
+                                pace_reported = true;
+                                log::warn!(
+                                    "rust-airplay: the video stream would not take a pace: {error}"
+                                );
+                            }
+                        }
+                        previous_timestamp = Some(timestamp);
                         if let Err(error) = video.push(crate::VideoFrame {
                             data,
                             timestamp,
@@ -1964,6 +2083,9 @@ where
     // connection, so it is captured once here rather than reached for through `config`.
     let on_client = config.on_client.clone();
     let client_policy = config.client_policy.clone();
+    // One volume for every connection: a client that sets it on one and reads it on
+    // another is reading the same session.
+    let client_volume = Arc::new(Mutex::new(identity.initial_volume));
     // A client changes the volume with `SET_PARAMETER volume:`; the renderer is where a
     // volume means anything, so the two are connected here.
     let volume_renderer = Arc::clone(&config.renderer);
@@ -1977,6 +2099,8 @@ where
             // to send instead of guessing.
             handlers.set_setup_ports(setup_ports);
             handlers.set_client_policy(client_policy.clone());
+            handlers.set_debug_body(config.debug_setup_body);
+            handlers.set_client_volume(Arc::clone(&client_volume));
             if let Some(callback) = on_artwork.clone() {
                 handlers.set_artwork_callback(move |mime, bytes| callback(mime, bytes));
             }
@@ -2012,11 +2136,19 @@ where
                 // A flush carries the sequence the client wants to resume at, so a
                 // handler can flush the session that is already playing.
                 let flushing = Arc::clone(&audio_flush);
+                let flush_generations = Arc::clone(&audio_flush_generation);
                 let video_flushing = Arc::clone(&video_flush);
                 handlers.set_flush_callback(move |next| {
                     log::info!("media     the client flushed, resuming at sequence {next}");
                     if let Some(handle) = flushing.lock().ok().and_then(|slot| slot.clone()) {
                         handle.request(next);
+                    }
+                    if let Some(generation) = flush_generations
+                        .lock()
+                        .ok()
+                        .and_then(|slot| slot.clone())
+                    {
+                        generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                     // The picture on screen is the one the client is leaving behind, and
                     // the frames queued for it are the same. Dropping them is what a flush
@@ -2031,12 +2163,28 @@ where
                 let audio_generation = Arc::clone(&audio_generation);
                 let mirror_keys = Arc::clone(&mirror_keys);
                 let timing_target = timing_target.clone();
+                let session_peer = Arc::clone(&session_peer);
+                let session_control = Arc::clone(&session_control);
                 // The audio key has to outlive the request that carried it *and* the
                 // connection that served it, so it is the session's rather than this
                 // handler set's.
                 let session_audio_key = Arc::clone(&session_audio_key);
                 let declared = Arc::clone(&declared_audio);
                 handlers.set_setup_callback(move |request| {
+                    if let Some(address) = request.client_address {
+                        *lock(&session_peer) = Some(address.ip());
+                    }
+                    if let (Some(address), Some(port)) = (
+                        request.client_address,
+                        request
+                            .streams
+                            .iter()
+                            .find(|stream| stream.kind == 96)
+                            .and_then(|stream| stream.control_port),
+                    ) {
+                        *lock(&session_control) =
+                            Some(std::net::SocketAddr::new(address.ip(), port));
+                    }
                     for stream in &request.streams {
                         if stream.kind == 96
                             && let Some(codec) = stream
@@ -2231,15 +2379,21 @@ where
                 let timing_target = timing_target.clone();
                 let mirror_keys = Arc::clone(&mirror_keys);
                 let session_audio_key = Arc::clone(&session_audio_key);
+                let session_peer = Arc::clone(&session_peer);
+                let session_control = Arc::clone(&session_control);
                 let audio_flushing = Arc::clone(&audio_flush);
+                let flush_generations = Arc::clone(&audio_flush_generation);
                 let video_flushing = Arc::clone(&video_flush);
                 let declared = Arc::clone(&declared_audio);
                 handlers.set_teardown_callback(move || {
                     *lock(&session_audio_key) = None;
+                    *lock(&session_peer) = None;
+                    *lock(&session_control) = None;
                     audio_keys.send_replace(None);
                     timing_target.send_replace(None);
                     lock(&mirror_keys).send_replace(None);
                     *lock(&audio_flushing) = None;
+                    *lock(&flush_generations) = None;
                     *lock(&video_flushing) = None;
                     if let Ok(mut slot) = declared.lock() {
                         *slot = None;

@@ -19,7 +19,7 @@ cargo test
 
 ## 门禁
 
-改动完成前必须全部通过。这些在本地运行；本仓库没有 CI 工作流，分支存在不等于改动完成。
+改动完成前必须全部通过。这些在本地和仓库的 CI 工作流里运行；分支存在不等于改动完成。
 
 ```sh
 cargo fmt --all -- --check
@@ -46,7 +46,7 @@ cargo package --allow-dirty
 
 ## 持续集成
 
-`.github/workflows/ci.yml` 在每次 push 和 pull request 时于 Ubuntu 与 Windows 运行：格式检查、测试、doctest、`-D warnings` 下的 clippy 与 rustdoc，以及 `cargo package --list`。
+`.github/workflows/ci.yml` 在每次 push 和 pull request 时于 Ubuntu 与 Windows 运行：格式检查、测试、doctest、`-D warnings` 下的 clippy 与 rustdoc，以及 `cargo package --list`。另有一个 job 在最低支持 Rust 版本上检查 crate，避免依赖悄悄提高自己的 MSRV。
 
 `Publish to crates.io` 由 Actions 页面手动触发。它会重新运行测试与 clippy，然后从 `main` 用仓库 secret `CARGO_REGISTRY_TOKEN` 发布。`dry_run` 只打包与校验，不上传。发布前的提交应包含版本号与变更日志。
 

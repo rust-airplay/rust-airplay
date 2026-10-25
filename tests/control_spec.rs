@@ -127,7 +127,7 @@ fn route_table_matches() {
             Delegated(Route::SetParameter),
         ),
         ("RECORD", "/stream", "RTSP/1.0", Local(Route::Record)),
-        ("FLUSH", "/stream", "RTSP/1.0", Local(Route::Flush)),
+        ("FLUSH", "/stream", "RTSP/1.0", Delegated(Route::Flush)),
         ("TEARDOWN", "/stream", "RTSP/1.0", Local(Route::Teardown)),
         // Documented extension: the protocol has no ANNOUNCE route at all.
         ("ANNOUNCE", "/stream", "RTSP/1.0", Local(Route::Announce)),

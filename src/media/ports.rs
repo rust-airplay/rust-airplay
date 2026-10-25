@@ -34,6 +34,12 @@ use super::audio::{AudioFrame, AudioSession, WINDOW_CAPACITY};
 /// allocate by sending something enormous.
 pub const MAX_DATAGRAM: usize = 2048;
 
+/// How long a mirror connection may stay silent before it is dropped.
+///
+/// The listener is serial: one connection that is accepted and then sends nothing would
+/// keep a real client waiting for as long as it liked.
+const FIRST_MIRROR_PACKET_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// The sockets one audio session listens on.
 #[derive(Debug)]
 pub struct MediaSockets {
@@ -154,8 +160,8 @@ impl MediaSockets {
     ///
     /// Returns the underlying error when the listener cannot accept.
     pub async fn accept_mirror(&self) -> std::io::Result<MirrorStream> {
-        let (stream, _) = self.mirror.accept().await?;
-        Ok(MirrorStream { stream })
+        let (stream, peer) = self.mirror.accept().await?;
+        Ok(MirrorStream { stream, peer })
     }
 
     /// Receives one audio datagram and returns what became ready.
@@ -200,6 +206,18 @@ impl MediaSockets {
         let mut buffer = [0u8; MAX_DATAGRAM];
         let length = self.timing.recv(&mut buffer).await?;
         Ok(buffer[..length].to_vec())
+    }
+
+    /// Sends one control packet to a client.
+    ///
+    /// A resend request is the one control packet this receiver writes: it goes from
+    /// the session's control socket to the port the client named in `SETUP`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying error when the packet cannot be sent.
+    pub async fn send_control(&self, client: SocketAddr, request: &[u8]) -> std::io::Result<usize> {
+        self.control.send_to(request, client).await
     }
 
     /// Sends the clock exchange's request to a client.
@@ -328,8 +346,31 @@ impl MediaSockets {
         &self,
         session: &mut AudioSession,
         received: &Received,
+        on_frame: impl FnMut(AudioFrame),
+        on_timing: impl FnMut(&[u8]),
+    ) -> std::io::Result<()> {
+        self.serve_from(session, received, None, on_frame, on_timing, |_| {})
+            .await
+    }
+
+    /// Serves one session, ignoring datagrams that did not come from `peer`.
+    ///
+    /// The media sockets are bound to an interface, not to a client: on a shared network
+    /// any host can send to the data port, and a receiver that decrypts whatever arrives
+    /// lets that host put frames into the renderer. A session has one client, so the
+    /// source address is the cheapest thing to check.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`MediaSockets::serve`].
+    pub async fn serve_from(
+        &self,
+        session: &mut AudioSession,
+        received: &Received,
+        peer: Option<std::net::IpAddr>,
         mut on_frame: impl FnMut(AudioFrame),
         mut on_timing: impl FnMut(&[u8]),
+        mut on_resend: impl FnMut(&[u16]),
     ) -> std::io::Result<()> {
         use std::sync::atomic::Ordering;
         use tokio::select;
@@ -338,9 +379,9 @@ impl MediaSockets {
         let mut timing = [0u8; MAX_DATAGRAM];
         loop {
             select! {
-                result = self.data.recv(&mut audio) => {
-                    let length = match result {
-                        Ok(length) => length,
+                result = self.data.recv_from(&mut audio) => {
+                    let (length, source) = match result {
+                        Ok(packet) => packet,
                         // A UDP socket reports an ICMP unreachable as a read error on
                         // Windows. That says something about the last datagram this
                         // session sent, not about the socket: treating it as fatal ends
@@ -351,48 +392,68 @@ impl MediaSockets {
                         }
                         Err(error) => return Err(error),
                     };
+                    if !source_allowed(peer, source.ip()) {
+                        received.reject(format!("data from {source}"));
+                        continue;
+                    }
                     received.data.fetch_add(1, Ordering::Relaxed);
                     match session.receive(&audio[..length]) {
                         Ok(frames) => {
                             for frame in frames {
                                 on_frame(frame);
                             }
+                            let missing = session.take_resend_requests(8);
+                            if !missing.is_empty() {
+                                on_resend(&missing);
+                            }
                         }
                         Err(error) => received.reject(error.to_string()),
                     }
                 }
-                result = self.control.recv(&mut control) => {
-                    let length = match result {
-                        Ok(length) => length,
+                result = self.control.recv_from(&mut control) => {
+                    let (length, source) = match result {
+                        Ok(packet) => packet,
                         Err(error) if is_transient(&error) => {
                             received.reject(error.to_string());
                             continue;
                         }
                         Err(error) => return Err(error),
                     };
+                    if !source_allowed(peer, source.ip()) {
+                        received.reject(format!("control from {source}"));
+                        continue;
+                    }
                     received.control.fetch_add(1, Ordering::Relaxed);
                     match session.receive_control(&control[..length]) {
                         Ok(frames) => {
                             for frame in frames {
                                 on_frame(frame);
                             }
+                            let missing = session.take_resend_requests(8);
+                            if !missing.is_empty() {
+                                on_resend(&missing);
+                            }
                         }
                         Err(error) => received.reject(error.to_string()),
                     }
                 }
-                result = self.timing.recv(&mut timing) => {
+                result = self.timing.recv_from(&mut timing) => {
                     // The clock exchange is a request this receiver sends and an answer
                     // the client sends back, so the socket has to be drained here as well
                     // as written to. What the answer means is the caller's: this only
                     // reports the bytes and counts them.
-                    let length = match result {
-                        Ok(length) => length,
+                    let (length, source) = match result {
+                        Ok(packet) => packet,
                         Err(error) if is_transient(&error) => {
                             received.reject(error.to_string());
                             continue;
                         }
                         Err(error) => return Err(error),
                     };
+                    if !source_allowed(peer, source.ip()) {
+                        received.reject(format!("timing from {source}"));
+                        continue;
+                    }
                     received.timing.fetch_add(1, Ordering::Relaxed);
                     on_timing(&timing[..length]);
                 }
@@ -418,6 +479,15 @@ fn is_transient(error: &std::io::Error) -> bool {
     )
 }
 
+/// Whether a datagram came from the client the session belongs to.
+///
+/// A session served before its peer is known accepts what arrives; once the control
+/// connection has named the peer, a datagram from another host is not part of the
+/// session.
+fn source_allowed(peer: Option<std::net::IpAddr>, source: std::net::IpAddr) -> bool {
+    peer.is_none_or(|peer| peer == source)
+}
+
 /// One mirroring client's connection.
 ///
 /// A TCP stream does not arrive in packets, so the reader asks for exactly the
@@ -427,9 +497,18 @@ fn is_transient(error: &std::io::Error) -> bool {
 #[derive(Debug)]
 pub struct MirrorStream {
     stream: TcpStream,
+    peer: SocketAddr,
 }
 
 impl MirrorStream {
+    /// Address the mirroring client connected from.
+    ///
+    /// The listener knows it at accept time; a receiver that has a session's control
+    /// peer can refuse a mirror stream from a different host.
+    pub fn peer_addr(&self) -> SocketAddr {
+        self.peer
+    }
+
     /// Reads packets until the client closes the connection, handing every frame to
     /// `on_frame`.
     ///
@@ -450,7 +529,28 @@ impl MirrorStream {
         mut on_packet: impl FnMut(&super::mirror::MirrorHeader, &[u8]),
         mut on_frame: impl FnMut(super::mirror::VideoFrame, super::mirror::StreamInfo),
     ) -> Result<(), ServeError> {
-        while let Some((header, payload)) = self.read_packet().await? {
+        let mut first = true;
+        loop {
+            let next = if first {
+                // A connection that is accepted and then says nothing holds the one
+                // mirror session a receiver serves. A real client sends its codec
+                // packet as soon as it connects, so a silent one is not a slow client.
+                match tokio::time::timeout(FIRST_MIRROR_PACKET_TIMEOUT, self.read_packet()).await {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        return Err(ServeError::Connection(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "the mirror connection sent nothing",
+                        )));
+                    }
+                }
+            } else {
+                self.read_packet().await?
+            };
+            first = false;
+            let Some((header, payload)) = next else {
+                break;
+            };
             // Every packet, before it is interpreted: a mirror stream is a byte
             // stream, so a caller that is only told about frames cannot tell "the
             // client stopped sending" from "we stopped reading", and those are

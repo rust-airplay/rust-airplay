@@ -124,11 +124,10 @@ fn identity() -> DeviceIdentity {
 }
 
 fn local_config() -> ServerConfig {
-    ServerConfig {
-        bind: "127.0.0.1:0".parse().expect("address"),
-        idle_timeout: Duration::from_secs(60),
-        ..ServerConfig::default()
-    }
+    let mut config = ServerConfig::default();
+    config.bind = "127.0.0.1:0".parse().expect("address");
+    config.idle_timeout = Duration::from_secs(60);
+    config
 }
 
 /// Measures how many control requests the service answers per second.
@@ -404,10 +403,8 @@ async fn answers_fairplay_setup_with_its_opaque_reply() {
 
 #[tokio::test]
 async fn serves_no_more_than_the_configured_number_of_connections() {
-    let config = ServerConfig {
-        max_connections: 1,
-        ..local_config()
-    };
+    let mut config = local_config();
+    config.max_connections = 1;
     let server = TestServer::start(config, RouteHandlers::new(identity())).await;
 
     // This connection takes the only slot and then stays quiet.
@@ -548,6 +545,7 @@ async fn setup_derives_the_audio_key_and_answers_the_configured_ports() {
                 stream_connection_id: None,
                 compression_type: None,
                 samples_per_frame: None,
+                control_port: Some(6000),
             }]
         );
     }
@@ -821,6 +819,53 @@ async fn parameters_report_volume_and_progress_and_answer_451_without_a_content_
     let (head, body) = response_parts(&response);
     assert_eq!(header_value(head, "Content-Type"), Some("text/parameters"));
     assert_eq!(body, b"volume: -15.000000\r\n");
+    server.shutdown();
+}
+
+#[tokio::test]
+async fn volume_set_on_one_connection_is_read_on_another() {
+    let volume = Arc::new(Mutex::new(0.0));
+    let server = TestServer::start_with(local_config(), {
+        let volume = Arc::clone(&volume);
+        move || {
+            let mut handlers = RouteHandlers::new(identity());
+            handlers.set_client_volume(Arc::clone(&volume));
+            handlers
+        }
+    })
+    .await;
+
+    let mut first = server.connect().await;
+    let mut pending = Vec::new();
+    first
+        .write_all(&request_with_body(
+            "SET_PARAMETER /stream",
+            "Content-Type: text/parameters\r\n",
+            b"volume: -12.0\r\n",
+        ))
+        .await
+        .expect("write");
+    let response = read_response(&mut first, &mut pending, Duration::from_secs(5))
+        .await
+        .expect("response");
+    assert!(response.starts_with(b"RTSP/1.0 200 OK\r\n"));
+
+    // A second connection is the same session: it reads the value the first set.
+    let mut second = server.connect().await;
+    let mut pending = Vec::new();
+    second
+        .write_all(&request_with_body(
+            "GET_PARAMETER /stream",
+            "Content-Type: text/parameters\r\n",
+            b"volume\r\n",
+        ))
+        .await
+        .expect("write");
+    let response = read_response(&mut second, &mut pending, Duration::from_secs(5))
+        .await
+        .expect("response");
+    let (_, body) = response_parts(&response);
+    assert_eq!(body, b"volume: -12.000000\r\n");
     server.shutdown();
 }
 
@@ -1266,6 +1311,89 @@ async fn setup_asks_for_a_password_once_and_then_accepts_the_digest() {
         .expect("refusal");
     assert!(response.starts_with(b"RTSP/1.0 401 Unauthorized\r\n"));
     assert_eq!(state.password_failures(), 1);
+    server.shutdown();
+}
+
+#[tokio::test]
+async fn a_password_guards_parameters_and_flush() {
+    let password = "secret";
+    let state = Arc::new(
+        PairingState::with_random(
+            [0x5a; 32],
+            PinMode::Disabled,
+            Box::new(FixedRandom { next: 1 }),
+        )
+        .with_password(password),
+    );
+    let server = TestServer::start_with(local_config(), {
+        let state = Arc::clone(&state);
+        move || RouteHandlers::with_pairing(pairing_identity(), Arc::clone(&state))
+    })
+    .await;
+    let mut client = server.connect().await;
+    let mut pending = Vec::new();
+
+    // A parameter change without a digest is challenged, not applied.
+    client
+        .write_all(&request_with_body(
+            "SET_PARAMETER /stream",
+            "Content-Type: text/parameters\r\n",
+            b"volume: -12.0\r\n",
+        ))
+        .await
+        .expect("write");
+    let response = read_response(&mut client, &mut pending, Duration::from_secs(5))
+        .await
+        .expect("challenge");
+    assert!(response.starts_with(b"RTSP/1.0 401 Unauthorized\r\n"));
+    let (head, _) = response_parts(&response);
+    let nonce = header_value(head, "WWW-Authenticate")
+        .and_then(|challenge| challenge.split_once("nonce=\""))
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(nonce, _)| nonce.to_owned())
+        .expect("nonce");
+
+    let digest = rust_airplay::pairing::digest_auth_response(
+        "SET_PARAMETER",
+        "client",
+        "raop",
+        password,
+        &nonce,
+        "/stream",
+        None,
+        None,
+        None,
+    );
+    let authorization = format!(
+        "Content-Type: text/parameters\r\nAuthorization: Digest username=\"client\", \
+         realm=\"raop\", nonce=\"{nonce}\", uri=\"/stream\", response=\"{digest}\"\r\n"
+    );
+    client
+        .write_all(&request_with_body(
+            "SET_PARAMETER /stream",
+            &authorization,
+            b"volume: -12.0\r\n",
+        ))
+        .await
+        .expect("write");
+    let response = read_response(&mut client, &mut pending, Duration::from_secs(5))
+        .await
+        .expect("answer");
+    assert!(response.starts_with(b"RTSP/1.0 200 OK\r\n"));
+
+    // The connection is authenticated now, so a later FLUSH needs no second digest.
+    client
+        .write_all(&request_with_body(
+            "FLUSH /stream",
+            "RTP-Info: seq=1\r\n",
+            b"",
+        ))
+        .await
+        .expect("write");
+    let response = read_response(&mut client, &mut pending, Duration::from_secs(5))
+        .await
+        .expect("flush");
+    assert!(response.starts_with(b"RTSP/1.0 200 OK\r\n"));
     server.shutdown();
 }
 

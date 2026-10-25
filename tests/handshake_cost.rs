@@ -58,12 +58,9 @@ async fn ask(stream: &mut TcpStream, request: &[u8], pending: &mut Vec<u8>) -> s
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "measures rather than asserts; run with --ignored --nocapture"]
 async fn what_each_answer_costs() {
-    let server = Server::bind(ServerConfig {
-        bind: "127.0.0.1:0".parse().expect("address"),
-        ..ServerConfig::default()
-    })
-    .await
-    .expect("bind");
+    let mut config = ServerConfig::default();
+    config.bind = "127.0.0.1:0".parse().expect("address");
+    let server = Server::bind(config).await.expect("bind");
     let address = server.local_addr().expect("address");
     let identity = RouteHandlers::new(rust_airplay::server::DeviceIdentity::new(
         "AA:BB:CC:DD:EE:FF",

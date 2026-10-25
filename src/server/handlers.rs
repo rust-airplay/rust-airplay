@@ -83,6 +83,11 @@ pub struct SetupStream {
     pub compression_type: Option<u16>,
     /// `spf`, samples per frame, which the protocol passes to its decoder with `ct`
     pub samples_per_frame: Option<u16>,
+    /// `controlPort`, where the client receives resend requests for this stream.
+    ///
+    /// A receiver that has no way to ask for a lost packet can only wait for the window
+    /// to give up on it; the port is the address half of that request.
+    pub control_port: Option<u16>,
 }
 
 /// What one accepted `SETUP` request hands to the session layer.
@@ -92,7 +97,8 @@ pub struct SetupStream {
 /// Nothing is derived
 /// from an unverified exchange: the session material of a connection is produced
 /// only after it finished `/pair-verify`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SetupRequest {
     /// Audio key, present when the request carried `ekey` and `eiv`.
     pub audio_key: Option<[u8; 16]>,
@@ -138,6 +144,33 @@ pub struct SetupRequest {
     /// guessing from the presence of a key: `Verified` proves the peer holds its
     /// private key, nothing more.
     pub authentication: SessionAuth,
+}
+
+impl std::fmt::Debug for SetupRequest {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // A `SETUP` carries the media key and, when the caller asked for it, the body
+        // the key was read from. Neither belongs in a log line, a panic message or a
+        // debugger view, so the fields that are material are reported by presence and
+        // size instead of by value.
+        formatter
+            .debug_struct("SetupRequest")
+            .field("audio_key", &self.audio_key.as_ref().map(|_| "<redacted>"))
+            .field("audio_iv", &self.audio_iv.as_ref().map(|_| "<redacted>"))
+            .field("streams", &self.streams)
+            .field("client_timing_port", &self.client_timing_port)
+            .field("client_address", &self.client_address)
+            .field(
+                "debug_body",
+                &self
+                    .debug_body
+                    .as_ref()
+                    .map(|body| format!("<{} bytes>", body.len())),
+            )
+            .field("keys", &self.keys)
+            .field("client_identity", &self.client_identity)
+            .field("authentication", &self.authentication)
+            .finish()
+    }
 }
 
 /// What a client asked to change with `SET_PARAMETER`.
@@ -464,6 +497,11 @@ pub struct RouteHandlers {
     client_volume: std::sync::Arc<std::sync::Mutex<f64>>,
     parameter: Option<Box<dyn FnMut(SetParameter) + Send>>,
     trace: Option<TraceCallback>,
+    /// Whether `SETUP` reports its body to the callback.
+    ///
+    /// Off by default: the body carries the media key, and a receiver that reports it
+    /// without being asked hands session material to whatever logs the callback's value.
+    debug_body: bool,
     /// What a `TEARDOWN` releases, when the caller owns session state.
     teardown: Option<Box<dyn FnMut() + Send>>,
     authenticated: bool,
@@ -496,6 +534,7 @@ impl RouteHandlers {
             last_remote: None,
             parameter: None,
             trace: None,
+            debug_body: false,
             teardown: None,
             authenticated: false,
             digest_nonce: None,
@@ -530,6 +569,22 @@ impl RouteHandlers {
     /// printing secrets.
     pub fn set_trace_callback(&mut self, callback: impl FnMut(&RequestTrace<'_>) + Send + 'static) {
         self.trace = Some(Box::new(callback));
+    }
+
+    /// Shares the client-visible volume with the other connections of a receiver.
+    ///
+    /// `GET_PARAMETER` and `/info` answer with this value, so a client that sets the
+    /// volume on one connection and reads it on another sees one session, not two.
+    pub fn set_client_volume(&mut self, volume: std::sync::Arc<std::sync::Mutex<f64>>) {
+        self.client_volume = volume;
+    }
+
+    /// Sets whether a `SETUP` reports its body alongside the values it established.
+    ///
+    /// Off by default. A body carries the media key and the client's session material, so
+    /// a receiver turns this on for a diagnostic run and off for a real one.
+    pub fn set_debug_body(&mut self, enabled: bool) {
+        self.debug_body = enabled;
     }
 
     /// Sets the callback that runs when a client tears the session down.
@@ -669,6 +724,16 @@ impl RouteHandler for RouteHandlers {
 
     fn handle(&mut self, route: Route, request: &RouteRequest<'_>) -> Option<RouteReply> {
         self.report_remote_control(request);
+        // A configured password protects the routes that change the session and the
+        // media, not just `SETUP`: a client that could set the volume, send artwork or
+        // flush a stream without authenticating would make the password advisory.
+        if matches!(
+            route,
+            Route::SetParameter | Route::GetParameter | Route::Flush
+        ) && let Some(challenge) = self.digest_challenge(request)
+        {
+            return Some(challenge);
+        }
         match route {
             Route::Feedback => Some(self.feedback_reply()),
             Route::Info => Some(self.info(request)),
@@ -895,11 +960,17 @@ impl RouteHandlers {
                     .get("spf")
                     .and_then(plist::Value::as_unsigned_integer)
                     .and_then(|value| u16::try_from(value).ok());
+                let control_port = stream
+                    .get("controlPort")
+                    .and_then(plist::Value::as_unsigned_integer)
+                    .and_then(|value| u16::try_from(value).ok())
+                    .filter(|port| *port != 0);
                 streams.push(SetupStream {
                     kind,
                     stream_connection_id: connection_id,
                     compression_type,
                     samples_per_frame,
+                    control_port,
                 });
             }
         }
@@ -949,7 +1020,7 @@ impl RouteHandlers {
             streams,
             client_timing_port,
             client_address: self.peer,
-            debug_body: Some(describe_plist(&body)),
+            debug_body: self.debug_body.then(|| describe_plist(&body)),
             keys,
             client_identity,
             authentication,

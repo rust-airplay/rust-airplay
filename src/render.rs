@@ -25,6 +25,7 @@ use std::fmt;
 ///
 /// [`Alac`]: AudioCodec::Alac
 /// [`AacEld`]: AudioCodec::AacEld
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioCodec {
     /// Apple Lossless, which is what AirPlay 1 clients send.
@@ -137,6 +138,7 @@ pub struct VideoConfig {
 ///
 /// A client sends one of the two and does not change mid-session, and the two need
 /// different parsers and decoders. The protocol keeps the same distinction as a flag
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VideoCodec {
     /// H.264, which is what every client sends unless told otherwise.
@@ -316,7 +318,7 @@ impl Default for Volume {
 }
 
 /// One audio frame, coded as its stream's codec.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AudioFrame {
     /// The coded frame, as it arrived.
     pub data: Vec<u8>,
@@ -326,8 +328,18 @@ pub struct AudioFrame {
     pub timestamp: u64,
 }
 
+impl std::fmt::Debug for AudioFrame {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AudioFrame")
+            .field("data", &format!("<{} bytes>", self.data.len()))
+            .field("timestamp", &self.timestamp)
+            .finish()
+    }
+}
+
 /// One video frame, in Annex-B form.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct VideoFrame {
     /// The frame's units, each behind an `00 00 00 01` start code.
     pub data: Vec<u8>,
@@ -337,7 +349,19 @@ pub struct VideoFrame {
     pub keyframe: bool,
 }
 
+impl std::fmt::Debug for VideoFrame {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VideoFrame")
+            .field("data", &format!("<{} bytes>", self.data.len()))
+            .field("timestamp", &self.timestamp)
+            .field("keyframe", &self.keyframe)
+            .finish()
+    }
+}
+
 /// Why a renderer refused to open, or stopped.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenderError {
     /// The backend is not available on this machine, with what is missing.
@@ -432,8 +456,8 @@ pub trait VideoStream: fmt::Debug + Send + Sync {
     /// Returns [`RenderError`] when the backend cannot take it.
     fn push(&self, frame: VideoFrame) -> Result<(), RenderError>;
 
-    /// Says when the next frame belongs, so a backend can play at the rate a
-    /// client sent rather than as fast as it can read.
+    /// Reports the spacing the stream is arriving at, so a backend can play at the
+    /// rate a client sent rather than as fast as it can read.
     ///
     /// This matters more than it looks. A mirror stream is one key frame followed
     /// by frames that only describe how the picture *changed*, so a receiver that
@@ -443,14 +467,17 @@ pub trait VideoStream: fmt::Debug + Send + Sync {
     /// therefore shows a picture that is only partly decoded, which is exactly what
     /// one did until this existed.
     ///
-    /// The default does nothing, because a backend that decodes on its own schedule
-    /// (or plays nothing) has no use for it.
+    /// The value is the interval since the previous frame, which is the spacing the
+    /// stream has been arriving at. Called before a frame when [`crate::Config::pace_video`]
+    /// is off; when the receiver paces itself it does the waiting and does not call
+    /// this. The default does nothing, because a backend that decodes on its own
+    /// schedule (or plays nothing) has no use for it.
     ///
     /// # Errors
     ///
     /// Returns [`RenderError`] when the backend cannot apply it.
-    fn set_pace(&self, until_next_seconds: f64) -> Result<(), RenderError> {
-        let _ = until_next_seconds;
+    fn set_pace(&self, interval_seconds: f64) -> Result<(), RenderError> {
+        let _ = interval_seconds;
         Ok(())
     }
 
@@ -860,5 +887,25 @@ mod tests {
         assert_eq!(renderer.video_streams(), 0);
         assert_eq!(AudioCodec::AacEld.name(), "aac-eld");
         assert_eq!(AudioCodec::Alac.name(), "alac");
+    }
+
+    #[test]
+    fn debug_does_not_print_frame_bytes() {
+        let audio = AudioFrame {
+            data: vec![0xab; 4],
+            timestamp: 7,
+        };
+        let debug = format!("{audio:?}");
+        assert!(!debug.contains("171"), "{debug}");
+        assert!(debug.contains("<4 bytes>"), "{debug}");
+
+        let video = VideoFrame {
+            data: vec![0xcd; 4],
+            timestamp: 9,
+            keyframe: true,
+        };
+        let debug = format!("{video:?}");
+        assert!(!debug.contains("205"), "{debug}");
+        assert!(debug.contains("<4 bytes>"), "{debug}");
     }
 }

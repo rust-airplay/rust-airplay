@@ -236,17 +236,15 @@ fn patterned(length: usize) -> Vec<u8> {
         .collect()
 }
 
-/// The client's side of the wire, written from the rule `mirror_buffer_decrypt`
-/// follows rather than from
-/// this crate: the counter restarts on the block after the blocks used so far, the
-/// bytes carried from the previous packet go in front, and a packet that does not
-/// end on a block boundary puts its tail, zero padded, into one whole block whose
-/// unused bytes it carries.
+/// The client's side of the wire, written from the same rule the port follows: the
+/// counter restarts on the block after the blocks used so far, the bytes carried from
+/// the previous packet go in front, and a packet that does not end on a block boundary
+/// puts its tail, zero padded, into one whole block whose unused bytes it carries.
 ///
-/// A port and a client that both read the rule correctly agree on the keystream
-/// every byte sits at. The differential test in `tests/the protocol_oracle.rs` checks
-/// the same port against the protocol's own code; this is what checks whole packet
-/// sequences, which the oracle's vectors are not.
+/// This is not an independent oracle. Both sides read the same written rule, so the
+/// test proves the implementation agrees with the rule over whole packet sequences; it
+/// does not prove a real client puts the keystream where the rule says. A ciphertext
+/// captured from a device belongs here before the rule itself is called verified.
 struct Encoder<'a> {
     stream: &'a [u8],
     /// Whole blocks the packets so far occupied, plus one for a tail that did not
@@ -899,4 +897,16 @@ fn a_different_stream_or_key_gives_different_material() {
     // The same inputs always give the same material: a caller may derive it
     // again after a re-key without asking the client anything.
     assert_eq!(first, stream_keys(1, &audio_key));
+}
+
+#[test]
+fn debug_does_not_print_the_stream_key() {
+    let keys = StreamKeys {
+        key: [0xab; STREAM_KEY_LEN],
+        iv: [0xcd; STREAM_KEY_LEN],
+    };
+    let debug = format!("{keys:?}");
+    assert!(!debug.contains("171"), "{debug}");
+    assert!(!debug.contains("205"), "{debug}");
+    assert!(debug.contains("redacted"), "{debug}");
 }

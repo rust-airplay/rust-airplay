@@ -165,7 +165,6 @@ pub fn decrypt_payload(
 /// The key and IV are the ones `SETUP` handed over (`SetupRequest::audio_key` and
 /// `audio_iv`); a receiver that has not set a session up has neither, and must
 /// not build one of these.
-#[derive(Debug)]
 pub struct AudioSession {
     key: [u8; 16],
     iv: [u8; 16],
@@ -176,6 +175,20 @@ pub struct AudioSession {
     /// that drains the data socket. A slot with at most one request is all that is
     /// needed: applying the newest request is what flushing means.
     flush_request: std::sync::Arc<std::sync::Mutex<Option<u16>>>,
+}
+
+impl std::fmt::Debug for AudioSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The key and IV decrypt every frame of the stream; a debug print is the most
+        // common way for a secret to reach a log.
+        formatter
+            .debug_struct("AudioSession")
+            .field("key", &"<redacted>")
+            .field("iv", &"<redacted>")
+            .field("window", &self.window)
+            .field("flush_request", &self.flush_request)
+            .finish()
+    }
 }
 
 /// A way to ask a session to flush, held by whoever serves `FLUSH`.
@@ -286,6 +299,11 @@ impl AudioSession {
     pub fn take_lost(&mut self) -> Vec<u16> {
         self.window.take_lost()
     }
+
+    /// Sequence numbers to ask the client to send again.
+    pub fn take_resend_requests(&mut self, limit: usize) -> Vec<u16> {
+        self.window.take_resend_requests(limit)
+    }
 }
 
 /// Why a datagram could not be turned into audio.
@@ -330,7 +348,7 @@ impl std::fmt::Display for AudioSessionError {
 impl std::error::Error for AudioSessionError {}
 
 /// One audio payload, ready for a renderer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AudioFrame {
     /// Sequence number this payload arrived with.
     pub sequence: u16,
@@ -340,6 +358,18 @@ pub struct AudioFrame {
     pub payload: Vec<u8>,
     /// What the payload is.
     pub kind: AudioPayloadKind,
+}
+
+impl std::fmt::Debug for AudioFrame {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AudioFrame")
+            .field("sequence", &self.sequence)
+            .field("timestamp", &self.timestamp)
+            .field("payload", &format!("<{} bytes>", self.payload.len()))
+            .field("kind", &self.kind)
+            .finish()
+    }
 }
 
 /// Delivers audio payloads in sequence order, holding a bounded amount of them.
@@ -360,6 +390,8 @@ pub struct ReorderWindow {
     started: bool,
     /// Sequence numbers given up on, oldest first.
     lost: Vec<u16>,
+    /// Sequence numbers already asked for, so one gap is not requested on every packet.
+    requested: Vec<u16>,
 }
 
 impl Default for ReorderWindow {
@@ -380,12 +412,38 @@ impl ReorderWindow {
             next: 0,
             started: false,
             lost: Vec::new(),
+            requested: Vec::new(),
         }
     }
 
     /// Sequence numbers this window gave up on since they were last taken.
     pub fn take_lost(&mut self) -> Vec<u16> {
         std::mem::take(&mut self.lost)
+    }
+
+    /// Sequence numbers missing from the window that have not been asked for yet.
+    ///
+    /// A gap is visible as a `None` slot between the packet that was delivered and the
+    /// one that skipped ahead. Asking once per sequence keeps a burst of packets from
+    /// producing a burst of identical requests; a request that is answered fills the
+    /// slot, and one that is not is not repeated for the life of the window.
+    pub fn take_resend_requests(&mut self, limit: usize) -> Vec<u16> {
+        let mut requests = Vec::new();
+        for (index, slot) in self.pending.iter().enumerate() {
+            if requests.len() >= limit {
+                break;
+            }
+            if slot.is_some() {
+                continue;
+            }
+            let sequence = self.next.wrapping_add(index as u16);
+            if self.requested.contains(&sequence) {
+                continue;
+            }
+            self.requested.push(sequence);
+            requests.push(sequence);
+        }
+        requests
     }
 
     /// Restarts the window at `next`, discarding everything it holds.
@@ -398,6 +456,7 @@ impl ReorderWindow {
     pub fn flush(&mut self, next: u16) {
         self.pending.clear();
         self.lost.clear();
+        self.requested.clear();
         self.next = next;
         self.started = true;
     }
@@ -466,6 +525,7 @@ impl ReorderWindow {
         // The caller sees a stream that starts here, not one with a hole in it:
         // the frames before the jump belong to a session that ended.
         self.lost.clear();
+        self.requested.clear();
     }
 
     /// Gives up on the frame the window is waiting for.
@@ -526,6 +586,21 @@ mod tests {
         assert_eq!(packet.timestamp, 0x0000_abcd);
         assert_eq!(packet.payload, [1, 2, 3, 4]);
         assert_eq!(packet.kind, AudioPayloadKind::Data);
+    }
+
+    #[test]
+    fn a_missing_packet_is_requested_once() {
+        let mut window = ReorderWindow::new(8);
+        assert_eq!(window.accept(frame(0)).len(), 1);
+        // Sequence 2 skips 1: the window holds it and the missing one is requested.
+        assert!(window.accept(frame(2)).is_empty());
+        assert_eq!(window.take_resend_requests(8), [1]);
+        assert!(
+            window.take_resend_requests(8).is_empty(),
+            "one request per gap, not one per packet"
+        );
+        // The answer fills the gap and releases both frames in order.
+        assert_eq!(window.accept(frame(1)).len(), 2);
     }
 
     #[test]
@@ -874,5 +949,23 @@ mod tests {
                 window.pending()
             );
         }
+    }
+
+    #[test]
+    fn debug_does_not_print_the_session_key_or_frame_payload() {
+        let session = AudioSession::new([0xab; 16], [0xcd; 16], 8);
+        let debug = format!("{session:?}");
+        assert!(!debug.contains("171"), "{debug}");
+        assert!(!debug.contains("205"), "{debug}");
+
+        let frame = AudioFrame {
+            sequence: 1,
+            timestamp: 2,
+            payload: vec![0xef; 4],
+            kind: AudioPayloadKind::Data,
+        };
+        let debug = format!("{frame:?}");
+        assert!(!debug.contains("239"), "{debug}");
+        assert!(debug.contains("<4 bytes>"), "{debug}");
     }
 }

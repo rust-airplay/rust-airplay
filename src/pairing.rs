@@ -151,7 +151,7 @@ pub fn verify_pair_signature(
 /// The protocol extracts the same names by searching the header with `strstr` and
 /// writing a NUL into the copy it made (,
 /// `get_token`); this type is what a read-only parse produces.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DigestAuthorization {
     /// `username` field.
     pub username: String,
@@ -169,6 +169,24 @@ pub struct DigestAuthorization {
     pub nonce_count: Option<String>,
     /// `cnonce` field, the client's own nonce.
     pub client_nonce: Option<String>,
+}
+
+impl std::fmt::Debug for DigestAuthorization {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `response` is the credential the client computed; the rest describe the
+        // challenge and are not secret.
+        formatter
+            .debug_struct("DigestAuthorization")
+            .field("username", &self.username)
+            .field("realm", &self.realm)
+            .field("nonce", &self.nonce)
+            .field("uri", &self.uri)
+            .field("response", &"<redacted>")
+            .field("qop", &self.qop)
+            .field("nonce_count", &self.nonce_count)
+            .field("client_nonce", &self.client_nonce)
+            .finish()
+    }
 }
 
 /// Parses a `Digest` authorization header.
@@ -469,5 +487,22 @@ mod tests {
             Some("0a4f113b"),
         );
         assert_eq!(response, "6629fae49393a05397450978507c4ef1");
+    }
+
+    #[test]
+    fn debug_does_not_print_the_digest_response() {
+        let authorization = DigestAuthorization {
+            username: "client".to_owned(),
+            realm: "raop".to_owned(),
+            nonce: "nonce".to_owned(),
+            uri: "/stream".to_owned(),
+            response: "deadbeef".to_owned(),
+            qop: None,
+            nonce_count: None,
+            client_nonce: None,
+        };
+        let debug = format!("{authorization:?}");
+        assert!(!debug.contains("deadbeef"), "{debug}");
+        assert!(debug.contains("redacted"), "{debug}");
     }
 }

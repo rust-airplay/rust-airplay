@@ -53,3 +53,22 @@ jobs:
 
       - name: Check what would be published
         run: cargo package --list
+
+  msrv:
+    name: MSRV 1.85
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install the minimum supported Rust
+        uses: dtolnay/rust-toolchain@1.85
+
+      - name: Cache the build
+        uses: Swatinem/rust-cache@v2
+
+      # A dependency that quietly raises its own MSRV would otherwise break the
+      # promise before the crate does.
+      - name: Check the crate on its minimum supported Rust
+        run: cargo check --lib

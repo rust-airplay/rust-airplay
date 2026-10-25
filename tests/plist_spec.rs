@@ -74,7 +74,9 @@ fn setup_request_matches_the_contract() {
         audio.get("controlPort").unwrap().as_unsigned_integer(),
         Some(6100)
     );
-    assert_eq!(audio.get("ct").unwrap().as_unsigned_integer(), Some(1));
+    // `ct` 2 is ALAC and 8 is AAC-ELD (UxPlay lib/raop_rtp.c:112); the fixture is a
+    // client that declared ALAC, so a session that reads it has a codec to open.
+    assert_eq!(audio.get("ct").unwrap().as_unsigned_integer(), Some(2));
     assert_eq!(audio.get("spf").unwrap().as_unsigned_integer(), Some(352));
     assert_eq!(
         audio.get("audioFormat").unwrap().as_unsigned_integer(),

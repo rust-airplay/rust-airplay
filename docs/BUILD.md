@@ -25,8 +25,8 @@ features and no optional dependencies, so there is one build configuration.
 
 ## Gates
 
-A change is finished when all of these pass. They run locally; this repository has no CI
-workflow, and a change is not finished because a branch exists.
+A change is finished when all of these pass. They run locally and in the repository's CI
+workflow; a change is not finished because a branch exists.
 
 ```sh
 cargo fmt --all -- --check
@@ -59,7 +59,8 @@ before a release. `cargo publish` is the release step and is done from a clean t
 
 `.github/workflows/ci.yml` runs on every push and pull request on Ubuntu and Windows: the
 format check, the tests, the doctests, clippy and rustdoc under `-D warnings`, and
-`cargo package --list`.
+`cargo package --list`. A separate job checks the crate on the minimum supported Rust, so a
+dependency that raises its own MSRV cannot break the promise quietly.
 
 `Publish to crates.io` is started by hand from the Actions tab. It runs the tests and clippy
 again, and then publishes from `main` with the token in the `CARGO_REGISTRY_TOKEN` repository
