@@ -16,6 +16,11 @@ docs/                   API, build guide, architecture, backend guide; English a
 examples/               a complete renderer implementation
 ```
 
+Unit tests live with their module: inline as `#[cfg(test)] mod tests` by default, or in
+`<module>/tests.rs` when the module is a directory and its suite is large. `tests/` is only
+for tests that use the public API; a unit test there could not see private items. No
+directory under `src/` holds only a `tests.rs`.
+
 ## Gates
 
 A change is finished when all of these pass:

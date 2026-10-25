@@ -53,6 +53,10 @@
 - `BACKEND.md` states that audio/video synchronization is not provided: the two
   timestamps count different clocks, and a backend that plays both builds the shared
   timeline itself.
+- The three large modules are directories now: `media::mirror` (header, crypto, nal, codec,
+  session), `server::handlers` (types, routes) and `server::pairing` (state, session). The
+  small test files are inline, so no `src` directory contains only a `tests.rs`. Public
+  paths are unchanged.
 
 ### Added
 
