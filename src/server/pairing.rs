@@ -82,6 +82,21 @@ pub const MAX_PIN_FAILURES: u32 = 5;
 /// accepting new attempts on a connection that keeps guessing.
 pub const MAX_PASSWORD_FAILURES: u32 = 5;
 
+/// How long password attempts are refused after the failure bound is reached.
+///
+/// A permanent lockout would let one unauthenticated client disable password-protected
+/// `SETUP` for as long as the process runs, and a password cannot be rotated the way a
+/// random one can. A bounded window keeps guessing expensive without handing that lever
+/// to anyone on the network.
+pub const PASSWORD_LOCKOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Refused digests, and the moment this receiver is willing to answer one again.
+#[derive(Debug, Default)]
+struct PasswordFailures {
+    count: u32,
+    blocked_until: Option<std::time::Instant>,
+}
+
 /// Secret bytes a pairing exchange needs.
 ///
 /// Every use of randomness in pairing goes through this trait — the one-time
@@ -145,7 +160,8 @@ pub struct PairingState {
     identity_public: [u8; ED25519_KEY_SIZE],
     pin_mode: PinMode,
     password: Option<Vec<u8>>,
-    password_failures: Mutex<u32>,
+    password_failures: Mutex<PasswordFailures>,
+    password_lockout: std::time::Duration,
     pending_pin: Mutex<Option<u16>>,
     failures: Mutex<u32>,
     random: Mutex<Box<dyn RandomSource>>,
@@ -170,7 +186,8 @@ impl PairingState {
             identity_public: ed25519_public_key(&identity_seed),
             pin_mode,
             password: None,
-            password_failures: Mutex::new(0),
+            password_failures: Mutex::new(PasswordFailures::default()),
+            password_lockout: PASSWORD_LOCKOUT,
             pending_pin: Mutex::new(None),
             failures: Mutex::new(0),
             random: Mutex::new(random),
@@ -189,6 +206,16 @@ impl PairingState {
         self
     }
 
+    /// Sets how long password attempts are refused after the failure bound.
+    ///
+    /// The default is 30 seconds. A test shortens it; a receiver on a hostile
+    /// network may lengthen it, at the cost of a longer window in which a legitimate
+    /// client cannot get in after an attack.
+    pub fn with_password_lockout(mut self, window: std::time::Duration) -> Self {
+        self.password_lockout = window;
+        self
+    }
+
     /// Whether a password was configured.
     pub fn has_password(&self) -> bool {
         self.password.is_some()
@@ -200,12 +227,7 @@ impl PairingState {
     /// The protocol counts the same events; the bound and the shared counter are the
     /// port's own, so guessing a password costs attempts across all connections.
     pub fn password_failures(&self) -> u32 {
-        *self.guard(&self.password_failures)
-    }
-
-    /// Counts one refused password.
-    pub(crate) fn record_password_failure(&self) {
-        *self.guard(&self.password_failures) += 1;
+        self.guard(&self.password_failures).count
     }
 
     /// Checks an RFC 2617 digest against the configured password.
@@ -214,7 +236,10 @@ impl PairingState {
     ///
     /// Returns [`PairingError::PinUnavailable`] when no password is configured,
     /// and [`PairingError::AuthenticationFailed`] once the failure bound is
-    /// reached, so a caller answers `401` in both cases.
+    /// reached, so a caller answers `401` in both cases. The bound is a lockout
+    /// window rather than a permanent stop: when the window has passed, the next
+    /// attempt is checked normally, so an attack cannot disable a password-protected
+    /// receiver for the life of the process.
     pub(crate) fn verify_password_digest(
         &self,
         method: &str,
@@ -223,7 +248,17 @@ impl PairingState {
         let Some(password) = self.password.as_deref() else {
             return Err(PairingError::PinUnavailable);
         };
-        if self.password_failures() >= MAX_PASSWORD_FAILURES {
+        let mut failures = self.guard(&self.password_failures);
+        let now = std::time::Instant::now();
+        if let Some(until) = failures.blocked_until {
+            if now < until {
+                return Err(PairingError::AuthenticationFailed);
+            }
+            failures.count = 0;
+            failures.blocked_until = None;
+        }
+        if failures.count >= MAX_PASSWORD_FAILURES {
+            failures.blocked_until = Some(now + self.password_lockout);
             return Err(PairingError::AuthenticationFailed);
         }
         let password = String::from_utf8_lossy(password);
@@ -240,10 +275,14 @@ impl PairingState {
         );
         if crate::pairing::constant_time_eq(expected.as_bytes(), authorization.response.as_bytes())
         {
-            *self.guard(&self.password_failures) = 0;
+            failures.count = 0;
+            failures.blocked_until = None;
             Ok(())
         } else {
-            self.record_password_failure();
+            failures.count += 1;
+            if failures.count >= MAX_PASSWORD_FAILURES {
+                failures.blocked_until = Some(now + self.password_lockout);
+            }
             Err(PairingError::AuthenticationFailed)
         }
     }
@@ -820,6 +859,12 @@ impl PairingSession {
             // connection, which is what makes an injected registration list an
             // access control rather than a single-shot gate; a client that
             // authenticates with the PIN clears it below.
+            register_check = true;
+        }
+        // A legacy `/pair-setup` proves nothing: it only asks for the receiver's public
+        // key. A client that takes that path must still satisfy the registration check,
+        // or the list would be advisory and a caller's access control would not exist.
+        if self.status == Status::Setup && !self.pin_verified {
             register_check = true;
         }
         if body.len() < 4 {

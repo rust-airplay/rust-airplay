@@ -547,6 +547,12 @@ pub trait RouteHandler {
     /// without printing secrets.
     fn trace(&mut self, _trace: &RequestTrace<'_>) {}
 
+    /// Is told when the client tears the session down.
+    ///
+    /// `TEARDOWN` is answered by this control layer rather than a [`RouteHandler`], so a
+    /// handler that owns session state needs this hook to release it.
+    fn teardown(&mut self) {}
+
     /// A clock the transport can watch to tell whether the client is still there.
     ///
     /// `GET`-style sessions are kept alive by `POST /feedback`, and a client that stops
@@ -839,6 +845,9 @@ impl ControlSession {
 
         let reply = match dispatch(&facts) {
             Dispatch::Local(route) => {
+                if route == Route::Teardown {
+                    handler.teardown();
+                }
                 self.observe(route);
                 ported_reply(route, self.audio_delay_micros)
             }

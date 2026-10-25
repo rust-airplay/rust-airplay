@@ -464,6 +464,8 @@ pub struct RouteHandlers {
     client_volume: std::sync::Arc<std::sync::Mutex<f64>>,
     parameter: Option<Box<dyn FnMut(SetParameter) + Send>>,
     trace: Option<TraceCallback>,
+    /// What a `TEARDOWN` releases, when the caller owns session state.
+    teardown: Option<Box<dyn FnMut() + Send>>,
     authenticated: bool,
     digest_nonce: Option<[u8; 16]>,
 }
@@ -494,6 +496,7 @@ impl RouteHandlers {
             last_remote: None,
             parameter: None,
             trace: None,
+            teardown: None,
             authenticated: false,
             digest_nonce: None,
         }
@@ -527,6 +530,15 @@ impl RouteHandlers {
     /// printing secrets.
     pub fn set_trace_callback(&mut self, callback: impl FnMut(&RequestTrace<'_>) + Send + 'static) {
         self.trace = Some(Box::new(callback));
+    }
+
+    /// Sets the callback that runs when a client tears the session down.
+    ///
+    /// `TEARDOWN` ends the media session, so a receiver that keeps a key, a clock
+    /// target or a flush handle releases them here instead of leaving them for the
+    /// next session to overwrite.
+    pub fn set_teardown_callback(&mut self, callback: impl FnMut() + Send + 'static) {
+        self.teardown = Some(Box::new(callback));
     }
 
     /// Sets the callback that receives what a `SET_PARAMETER` request asked for.
@@ -681,6 +693,12 @@ impl RouteHandler for RouteHandlers {
 
     fn trace(&mut self, trace: &RequestTrace<'_>) {
         self.report_trace(trace);
+    }
+
+    fn teardown(&mut self) {
+        if let Some(callback) = self.teardown.as_mut() {
+            callback();
+        }
     }
 }
 

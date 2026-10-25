@@ -21,6 +21,21 @@ connection gets its own handler set; the media session is shared between them, b
 client's audio key arrives in one `SETUP` and the mirror stream identifier in a later one,
 possibly on a different connection.
 
+`run` is the process's entry point: it stops on Ctrl+C. A program that wants another stop
+condition - a signal, a command, a test - calls `serve` with the future that completes when the
+receiver should return:
+
+```rust
+pub async fn serve<F>(config: Config, shutdown: F) -> Result<(), Error>
+where
+    F: Future<Output = ()> + Send + 'static
+```
+
+Its `Ok(())` means the shutdown future completed, the control service stopped and the mDNS
+advertisement was withdrawn. A receiver that serves more than one client uses this shape: a
+new `SETUP` with a key replaces the session the audio loop is reading, and the previous
+session's stream is closed.
+
 `Ok()` means the receiver was asked to stop. `Err` is a failure that prevented it from
 starting:
 
@@ -56,13 +71,15 @@ path decision and prints nothing; the only files it opens are the ones a caller 
 | --- | --- | --- |
 | `name` | `String` | the name clients see in their menu |
 | `port` | `u16` | control port; `0` binds an ephemeral one and advertises whichever it got |
+| `bind` | `IpAddr` | address the control and media sockets bind to; `0.0.0.0` by default, `127.0.0.1` for a local receiver |
+| `advertise` | `bool` | whether the receiver registers its mDNS records; off means a client has to be told the address |
 | `seed` | `[u8; 32]` | the secret every identity key derives from; the same seed keeps a receiver recognisable across restarts |
 | `device_id` | `Option<String>` | hardware address to advertise. Derived from the seed when `None` |
 | `pin` | `PinMode` | `Disabled`, `OneTime`, or `Fixed(digits)`. The PIN is reported through `on_pin` |
 | `password` | `Option<String>` | when set, `SETUP` also requires this digest password |
 | `audio_codec` | `AudioCodec` | the coding used when a client never states its `ct` in `SETUP`; a declaration always wins |
 | `renderer` | `Arc<dyn Renderer>` | what plays the media |
-| `clients` | `Arc<Mutex<HashSet<[u8; 32]>>>` | client keys already verified. Read at startup, added to as clients are verified |
+| `clients` | `Arc<Mutex<HashSet<[u8; 32]>>>` | client keys already verified. Read at startup, added to as clients are verified. With a PIN configured the list also decides whether a client may verify without pairing again; with the PIN disabled the legacy setup is the only way in, so the list is a record only |
 | `on_client` | `Option<ClientCallback>` | called the first time a client is verified, so the caller can persist the key |
 | `trace_log` | `Option<PathBuf>` | when set, request traces are appended here |
 | `dump_video` | `Option<PathBuf>` | when set, the first video frames are appended here as Annex-B |

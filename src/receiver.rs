@@ -285,25 +285,28 @@ fn open_audio(
 
 /// A future that is ready when the receiver is stopping.
 ///
-/// A receiver ends with Ctrl+C, and its receive loops need to be told: a loop that outlived
-/// the control plane would hold a sound card or a window open with nothing to play into it.
-/// One that cannot install signal handling waits forever instead, which is the same receiver
-/// it was before this existed.
+/// A receiver ends when the caller asks it to, and its receive loops need to be told: a loop
+/// that outlived the control plane would hold a sound card or a window open with nothing to
+/// play into it.
 type Stopping = tokio::sync::watch::Receiver<bool>;
 
-/// A signal that says the receiver is stopping, and a way to watch it.
-fn shutdown_signal() -> Stopping {
-    let (sender, receiver) = tokio::sync::watch::channel(false);
-    tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        log::info!("\nstopping");
-        let _ = sender.send(true);
-    });
-    receiver
+/// The audio key and IV of one session, and the number that tells sessions apart.
+///
+/// A receiver in a long-running process serves more than one session. Every `SETUP` that
+/// carries a key starts one, so the receive loop has to be able to tell the key it is
+/// reading from the one it was started with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionKey {
+    key: [u8; 16],
+    iv: [u8; 16],
+    generation: u64,
 }
 
-/// Waits for the signal, or forever for a receiver that has none.
+/// Waits for the stop signal, or returns at once when it has already fired.
 async fn stopped(mut signal: Stopping) {
+    if *signal.borrow() {
+        return;
+    }
     let _ = signal.changed().await;
 }
 
@@ -336,6 +339,17 @@ pub struct Config {
     pub name: String,
     /// Port the control service listens on; `0` binds an ephemeral one.
     pub port: u16,
+    /// Address the control and media sockets bind to.
+    ///
+    /// The default serves every interface, which is what a receiver on a home network
+    /// wants. `127.0.0.1` keeps a test, or a receiver that should not be reachable from
+    /// the network, on one machine.
+    pub bind: std::net::IpAddr,
+    /// Whether the receiver announces itself over mDNS.
+    ///
+    /// A test, or a program that publishes the control address some other way, turns
+    /// this off; the receiver still answers every request, it is only not discovered.
+    pub advertise: bool,
     /// The 32 bytes every identity key derives from.
     pub seed: [u8; 32],
     /// Device identifier to announce, when the caller has one of its own.
@@ -354,6 +368,11 @@ pub struct Config {
     /// What plays the media.
     pub renderer: Arc<dyn Renderer>,
     /// Clients whose keys a previous run verified.
+    ///
+    /// With a PIN configured the list also decides whether a client may verify without
+    /// pairing again. With the PIN disabled it is a record only: the legacy `/pair-setup`
+    /// is then the way a first client joins, and refusing it would leave a receiver with
+    /// no way to accept one.
     pub clients: Arc<Mutex<HashSet<[u8; 32]>>>,
     /// Called when a client is verified for the first time.
     pub on_client: Option<ClientCallback>,
@@ -476,6 +495,8 @@ impl Config {
         Self {
             name: name.into(),
             port: 7000,
+            bind: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            advertise: true,
             seed,
             device_id: None,
             pin: PinMode::OneTime,
@@ -796,13 +817,43 @@ impl From<&str> for Error {
 
 /// Serves clients until the process is asked to stop.
 ///
+/// This is [`serve`] with the process's Ctrl+C as the shutdown signal. A program that wants
+/// another stop condition - a signal, a command, a test - calls [`serve`] and supplies the
+/// future that completes when the receiver should return.
+///
 /// # Errors
 ///
 /// Returns [`Error`] when a port cannot be bound, the receiver cannot be announced, or a
 /// media socket cannot be opened. A session that fails later is reported and does not stop
 /// the receiver: the next client is why it is still running.
 pub async fn run(config: Config) -> Result<(), Error> {
+    serve(config, async {
+        let _ = tokio::signal::ctrl_c().await;
+    })
+    .await
+}
+
+/// Serves clients until `shutdown` completes.
+///
+/// The returned future resolves `Ok(())` once the control service has stopped and the
+/// advertisement has been withdrawn. Every loop the receiver started is told to end, so the
+/// control port is free when this returns.
+///
+/// # Errors
+///
+/// Same as [`run`].
+pub async fn serve<F>(config: Config, shutdown: F) -> Result<(), Error>
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
     let seed = config.seed;
+    // One stop edge for every loop: the control plane, the media loops and the PIN watcher.
+    let (stop_sender, stopping) = tokio::sync::watch::channel(false);
+    let shutdown_task = tokio::spawn(async move {
+        shutdown.await;
+        log::info!("stopping");
+        let _ = stop_sender.send(true);
+    });
     let renderer = Arc::clone(&config.renderer);
     let device_id = config
         .device_id
@@ -814,10 +865,17 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // remembering keys only once a session carries them.
     let known = Arc::clone(&config.clients);
 
-    let mut state = PairingState::new(seed, config.pin).with_client_registered({
-        let known = Arc::clone(&known);
-        move |key| lock(&known).contains(key)
-    });
+    let mut state = PairingState::new(seed, config.pin);
+    // The remembered-client list gates `/pair-verify` only while a PIN is configured.
+    // With the PIN disabled the legacy `/pair-setup` is the only way a first client can
+    // join, so treating the list as an access control there would lock out every new
+    // client; the list is still recorded and reported.
+    if config.pin != PinMode::Disabled {
+        state = state.with_client_registered({
+            let known = Arc::clone(&known);
+            move |key| lock(&known).contains(key)
+        });
+    }
     if let Some(password) = config.password.as_deref() {
         state = state.with_password(password);
     }
@@ -858,9 +916,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
             ))
         })?;
     let server_config = ServerConfig {
-        bind: format!("0.0.0.0:{}", config.port)
-            .parse()
-            .map_err(|error| format!("bind address: {error}"))?,
+        bind: std::net::SocketAddr::new(config.bind, config.port),
         audio_delay_micros,
         nohold: config.nohold,
         feedback_timeout: config.feedback_timeout,
@@ -909,19 +965,26 @@ pub async fn run(config: Config) -> Result<(), Error> {
         txt_raop: Some(txt_raop),
         ..identity
     };
-    let advertiser = Advertiser::register(&advertisement)
-        .map_err(|error| format!("cannot announce the receiver: {error}"))?;
-    for fullname in advertiser.fullnames() {
-        log::info!("advertised {fullname}");
-    }
+    let advertiser = if config.advertise {
+        let advertiser = Advertiser::register(&advertisement)
+            .map_err(|error| format!("cannot announce the receiver: {error}"))?;
+        for fullname in advertiser.fullnames() {
+            log::info!("advertised {fullname}");
+        }
+        Some(advertiser)
+    } else {
+        log::info!("advertisement disabled; clients must be told the control address");
+        None
+    };
 
     // The PIN only exists once a client asks for one, so it is printed when it
     // appears rather than up front.
     let pin_state = Arc::clone(&state);
+    let pin_stop = stopping.clone();
     let on_pin = config.on_pin.clone();
     std::thread::spawn(move || {
         let mut shown: Option<String> = None;
-        loop {
+        while !*pin_stop.borrow() {
             let pin = pin_state.pending_pin();
             if pin != shown {
                 if let Some(pin) = pin.as_deref() {
@@ -949,7 +1012,7 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // first `SETUP` that carries a key, because until then there is nothing to
     // decrypt with.
     let media = crate::media::ports::MediaSockets::bind_ports(
-        "0.0.0.0:0".parse().expect("bind address"),
+        std::net::SocketAddr::new(config.bind, 0),
         config.ports,
     )
     .await
@@ -991,16 +1054,19 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let media = Arc::new(media);
     let audio_renderer = Arc::clone(&renderer);
     let audio_codec = config.audio_codec;
-    // The control plane runs until Ctrl+C, and a receive loop that outlived it would keep a
-    // sound card or a window open with nothing to play into it.
-    let stopping = shutdown_signal();
+    // The control plane runs until the caller's shutdown completes, and a receive loop that
+    // outlived it would keep a sound card or a window open with nothing to play into it.
     let audio_stop = stopping.clone();
-    let (media_key, media_ready) = tokio::sync::oneshot::channel::<([u8; 16], [u8; 16])>();
+    // The audio key of the session. A receiver serves more than one session, and a
+    // reconnecting client sends a new key; a one-shot channel would deliver the first key
+    // and lose every later one, so the key lives in a watch channel the audio loop can
+    // follow from session to session.
+    let (audio_keys, audio_keys_rx) = tokio::sync::watch::channel::<Option<SessionKey>>(None);
+    let audio_generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
     // What the client says it is sending, as `(coding, samples per frame)`. The SETUP that
     // names an audio stream carries it, and it can arrive a
     // moment after the SETUP that carries the key, so the audio task waits for it briefly.
     let declared_audio: Arc<Mutex<Option<(AudioCodec, u16)>>> = Arc::new(Mutex::new(None));
-    let media_key = Arc::new(Mutex::new(Some(media_key)));
     // The audio key of the session, kept where every control connection can see it.
     //
     // A device sends its audio key in one `SETUP` and its `type: 110` stream entry in a
@@ -1013,10 +1079,10 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let session_audio_key: Arc<Mutex<Option<[u8; 16]>>> = Arc::new(Mutex::new(None));
     // Where the clock exchange goes: the timing port a client named in its `SETUP`,
     // at the address its control connection came from. The receiver starts that
-    // exchange, so a session that never learns this never ticks
-    //.
-    let (timing_target, timing_ready) = tokio::sync::oneshot::channel::<std::net::SocketAddr>();
-    let timing_target = Arc::new(Mutex::new(Some(timing_target)));
+    // exchange, so a session that never learns this never ticks. A watch channel,
+    // because a later session names another address.
+    let (timing_target, timing_target_rx) =
+        tokio::sync::watch::channel::<Option<std::net::SocketAddr>>(None);
     // The mirror stream is keyed by the connection identifier a client sends in its
     // `type: 110` stream entry, which arrives in a *different* `SETUP` from the audio
     // key the stream is derived from — and a device may open the mirror connection
@@ -1046,151 +1112,199 @@ pub async fn run(config: Config) -> Result<(), Error> {
     let audio_probes = Arc::clone(&probe);
     let declared_audio_task = Arc::clone(&declared_audio);
     tokio::spawn(async move {
-        tokio::select! {
-            _ = stopped(audio_stop.clone()) => {}
-            ready = media_ready => {
-                let Ok((key, iv)) = ready else {
-                    return;
-                };
-                // A client that names its coding gets that coding; one that never does
-                // falls back to the configured default after a short wait. The protocol starts
-                // audio from the same declaration, so the wait
-                // is the interval between two SETUP requests rather than a guess.
-                let waiting = std::time::Instant::now();
-                let declared = loop {
-                    if let Some(found) = declared_audio_task.lock().ok().and_then(|slot| *slot) {
-                        break Some(found);
-                    }
-                    if waiting.elapsed() >= std::time::Duration::from_millis(500) {
-                        break None;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                };
-                let (codec, samples_per_frame) = declared.unwrap_or((audio_codec, 480));
-                if declared.is_none() {
-                    log::info!(
-                        "media     no audio format declared; using {} as configured",
-                        codec.name()
-                    );
+        let mut keys = audio_keys_rx;
+        loop {
+            // Wait for a key: the first session, or the one after a teardown.
+            let session_key = loop {
+                let current = *keys.borrow_and_update();
+                if let Some(current) = current {
+                    break current;
                 }
-                let stream = open_audio(&audio_renderer, codec, samples_per_frame);
-                let mut session = crate::media::ports::session(key, iv);
-                // Published before the first datagram, so a `FLUSH` that arrives early is
-                // not lost: the slot holds the request until the session applies it.
-                if let Ok(mut slot) = audio_flush_task.lock() {
-                    *slot = Some(session.flush_handle());
-                }
-                // Audio is pushed by a thread of its own, for the same reason video is:
-                // writing to a pipeline blocks when the pipeline is full, and a write that
-                // blocks inside the receive loop stops everything that loop is watching —
-                // the screen, the control socket and the clock exchange. A session with
-                // sound in it froze while a silent one ran, and this is that.
-                //
-                // A queue that is full drops the frame rather than waiting. Waiting is the
-                // fault being avoided, and the receive loop has to keep draining the sockets
-                // whatever the pipeline is doing; dropping is counted and reported once, so
-                // a pipeline that never recovers is seen rather than buffered away.
-                let (feed, queued) = std::sync::mpsc::sync_channel::<crate::AudioFrame>(
-                    QUEUED_AUDIO_FRAMES,
-                );
-                let played = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-                let played_writer = std::sync::Arc::clone(&played);
-                // The stream is taken out of the `Option` rather than borrowed from it: the
-                // writer thread owns it for the life of the session, and a borrowed stream
-                // cannot be moved into a thread.
-                let playing = stream.map(|playing| {
-                    std::thread::spawn(move || {
-                        use std::sync::atomic::Ordering;
-                        // Anchored on the first frame's arrival, then advancing by the
-                        // samples each frame carries: an audio timestamp is an RTP counter
-                        // from a random origin, so only its differences mean anything.
-                        let mut pacer =
-                            crate::media::pace::Pacer::new(crate::media::pace::Ticks::Samples(
-                                crate::AudioConfig::default().sample_rate,
-                            ));
-                        let opened = std::time::Instant::now();
-                        while let Ok(frame) = queued.recv() {
-                            let arrival = opened.elapsed().as_nanos() as u64;
-                            let due = pacer.due_limited(frame.timestamp, arrival, MAX_LEAD);
-                            if let Some(wait) = crate::media::pace::Pacer::wait(due, arrival) {
-                                std::thread::sleep(wait);
-                            }
-                            // What real-time playback needs and this backend does not do
-                            // yet: the frame carries its timestamp and the sink is told to
-                            // play as fast as it is given, so audio runs at whatever rate
-                            // the pipeline manages. Named here rather than left implicit.
-                            if let Err(error) = playing.push(frame) {
-                                log::warn!("rust-airplay: the renderer refused a frame: {error}");
-                                break;
-                            }
-                            played_writer.fetch_add(1, Ordering::Relaxed);
-                        }
-                        // A last frame already handed over is played out rather than cut
-                        // off, which is what an end of stream means to a backend.
-                        if let Err(error) = playing.close() {
-                            log::warn!("rust-airplay: the audio stream ended badly: {error}");
-                        }
-                    })
-                });
-                // The clock exchange runs beside the audio, on its own socket: the
-                // receiver is the one that starts it, and the protocol keeps it going
-                // for as long as the session does.
-                let timing_sockets = Arc::clone(&audio_sockets);
-                let timing_stop = audio_stop.clone();
-                let timing_clock = Arc::clone(&clock);
-                let audio_probe = audio_probes;
-                let audio_rate = crate::AudioConfig::default().sample_rate;
-                tokio::spawn(async move {
-                    let Ok(target) = timing_ready.await else {
-                        return;
-                    };
-                    log::info!("media     clock exchange with {target}");
-                    let mut sent: u64 = 0;
-                    let mut stop = timing_stop;
-                    loop {
-                        // `build_request` takes Unix nanoseconds and puts the NTP form
-                        // of them where the protocol puts the send time
-                        //.
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|since| since.as_nanos() as u64)
-                            .unwrap_or(0);
-                        let Ok(request) = crate::media::timing::build_request(now) else {
-                            log::warn!("rust-airplay: cannot build a timing request");
+                tokio::select! {
+                    _ = stopped(audio_stop.clone()) => return,
+                    changed = keys.changed() => {
+                        if changed.is_err() {
                             return;
-                        };
-                        // The answer echoes these four bytes, and a reply to a request this
-                        // receiver never made is not a measurement.
-                        let t1 = u32::from_be_bytes([request[24], request[25], request[26], request[27]]);
-                        if let Ok(mut clock) = timing_clock.lock() {
-                            clock.request_sent(t1);
                         }
-                        match timing_sockets.send_timing_request(target, &request).await {
-                            Ok(_) => sent += 1,
-                            Err(error) => {
-                                log::warn!("rust-airplay: cannot send a timing request: {error}");
+                    }
+                }
+            };
+            let (key, iv) = (session_key.key, session_key.iv);
+            // Every session starts its own clock; the previous one described another
+            // device.
+            if let Ok(mut clock) = clock.lock() {
+                *clock = crate::media::timing::RemoteClock::new();
+            }
+            // A client that names its coding gets that coding; one that never does
+            // falls back to the configured default after a short wait. The protocol starts
+            // audio from the same declaration, so the wait
+            // is the interval between two SETUP requests rather than a guess.
+            let waiting = std::time::Instant::now();
+            let declared = loop {
+                if let Some(found) = declared_audio_task.lock().ok().and_then(|slot| *slot) {
+                    break Some(found);
+                }
+                if waiting.elapsed() >= std::time::Duration::from_millis(500) {
+                    break None;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            };
+            let (codec, samples_per_frame) = declared.unwrap_or((audio_codec, 480));
+            if declared.is_none() {
+                log::info!(
+                    "media     no audio format declared; using {} as configured",
+                    codec.name()
+                );
+            }
+            let stream = open_audio(&audio_renderer, codec, samples_per_frame);
+            let mut session = crate::media::ports::session(key, iv);
+            // Published before the first datagram, so a `FLUSH` that arrives early is
+            // not lost: the slot holds the request until the session applies it.
+            if let Ok(mut slot) = audio_flush_task.lock() {
+                *slot = Some(session.flush_handle());
+            }
+            // Audio is pushed by a thread of its own, for the same reason video is:
+            // writing to a pipeline blocks when the pipeline is full, and a write that
+            // blocks inside the receive loop stops everything that loop is watching —
+            // the screen, the control socket and the clock exchange. A session with
+            // sound in it froze while a silent one ran, and this is that.
+            //
+            // A queue that is full drops the frame rather than waiting. Waiting is the
+            // fault being avoided, and the receive loop has to keep draining the sockets
+            // whatever the pipeline is doing; dropping is counted and reported once, so
+            // a pipeline that never recovers is seen rather than buffered away.
+            let (feed, queued) =
+                std::sync::mpsc::sync_channel::<crate::AudioFrame>(QUEUED_AUDIO_FRAMES);
+            let played = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let played_writer = std::sync::Arc::clone(&played);
+            // The stream is taken out of the `Option` rather than borrowed from it: the
+            // writer thread owns it for the life of the session, and a borrowed stream
+            // cannot be moved into a thread.
+            let playing = stream.map(|playing| {
+                std::thread::spawn(move || {
+                    use std::sync::atomic::Ordering;
+                    // Anchored on the first frame's arrival, then advancing by the
+                    // samples each frame carries: an audio timestamp is an RTP counter
+                    // from a random origin, so only its differences mean anything.
+                    let mut pacer =
+                        crate::media::pace::Pacer::new(crate::media::pace::Ticks::Samples(
+                            crate::AudioConfig::default().sample_rate,
+                        ));
+                    let opened = std::time::Instant::now();
+                    while let Ok(frame) = queued.recv() {
+                        let arrival = opened.elapsed().as_nanos() as u64;
+                        let due = pacer.due_limited(frame.timestamp, arrival, MAX_LEAD);
+                        if let Some(wait) = crate::media::pace::Pacer::wait(due, arrival) {
+                            std::thread::sleep(wait);
+                        }
+                        // What real-time playback needs and this backend does not do
+                        // yet: the frame carries its timestamp and the sink is told to
+                        // play as fast as it is given, so audio runs at whatever rate
+                        // the pipeline manages. Named here rather than left implicit.
+                        if let Err(error) = playing.push(frame) {
+                            log::warn!("rust-airplay: the renderer refused a frame: {error}");
+                            break;
+                        }
+                        played_writer.fetch_add(1, Ordering::Relaxed);
+                    }
+                    // A last frame already handed over is played out rather than cut
+                    // off, which is what an end of stream means to a backend.
+                    if let Err(error) = playing.close() {
+                        log::warn!("rust-airplay: the audio stream ended badly: {error}");
+                    }
+                })
+            });
+            // The clock exchange runs beside the audio, on its own socket: the
+            // receiver is the one that starts it, and the protocol keeps it going
+            // for as long as the session does.
+            let timing_sockets = Arc::clone(&audio_sockets);
+            let timing_stop = audio_stop.clone();
+            let timing_clock = Arc::clone(&clock);
+            let audio_probe = Arc::clone(&audio_probes);
+            let audio_rate = crate::AudioConfig::default().sample_rate;
+            let timing_targets = timing_target_rx.clone();
+            let timing_task = tokio::spawn(async move {
+                let mut stop = timing_stop;
+                let mut target_signal = timing_targets.clone();
+                let mut target = loop {
+                    if let Some(current) = *timing_targets.borrow() {
+                        break current;
+                    }
+                    tokio::select! {
+                        _ = stop.changed() => return,
+                        changed = target_signal.changed() => {
+                            if changed.is_err() {
                                 return;
                             }
                         }
-                        tokio::select! {
-                            _ = stop.changed() => return,
-                            _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {}
-                        }
-                        if sent % 10 == 0 {
-                            log::info!("media     {sent} timing requests sent");
+                    }
+                };
+                log::info!("media     clock exchange with {target}");
+                let mut sent: u64 = 0;
+                loop {
+                    // `build_request` takes Unix nanoseconds and puts the NTP form
+                    // of them where the protocol puts the send time
+                    //.
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|since| since.as_nanos() as u64)
+                        .unwrap_or(0);
+                    let Ok(request) = crate::media::timing::build_request(now) else {
+                        log::warn!("rust-airplay: cannot build a timing request");
+                        return;
+                    };
+                    // The answer echoes these four bytes, and a reply to a request this
+                    // receiver never made is not a measurement.
+                    let t1 =
+                        u32::from_be_bytes([request[24], request[25], request[26], request[27]]);
+                    if let Ok(mut clock) = timing_clock.lock() {
+                        clock.request_sent(t1);
+                    }
+                    match timing_sockets.send_timing_request(target, &request).await {
+                        Ok(_) => sent += 1,
+                        Err(error) => {
+                            log::warn!("rust-airplay: cannot send a timing request: {error}");
+                            return;
                         }
                     }
-                });
-                let frames = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-                let dropped = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-                // What a device actually sends, for a decoder that is not this one to
-                // identify: a stream that is received, queued and played without a sound is
-                // one whose coding is the thing in doubt.
-                // A diagnostic that cannot be written is a warning, not a reason to end a
-                // session: the path comes from the program, and a program that asked for a
-                // dump is one that wants the session anyway.
-                let dump_frames = config.dump_audio.as_ref().and_then(|path| {
-                    match std::fs::File::create(path) {
+                    tokio::select! {
+                        _ = stop.changed() => return,
+                        changed = target_signal.changed() => {
+                            if changed.is_err() {
+                                return;
+                            }
+                            match *timing_targets.borrow() {
+                                Some(next) if next != target => {
+                                    target = next;
+                                    if let Ok(mut clock) = timing_clock.lock() {
+                                        *clock = crate::media::timing::RemoteClock::new();
+                                    }
+                                    log::info!("media     clock exchange with {target}");
+                                }
+                                Some(_) => {}
+                                None => return,
+                            }
+                        }
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {}
+                    }
+                    if sent % 10 == 0 {
+                        log::info!("media     {sent} timing requests sent");
+                    }
+                }
+            });
+            let frames = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let dropped = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            // What a device actually sends, for a decoder that is not this one to
+            // identify: a stream that is received, queued and played without a sound is
+            // one whose coding is the thing in doubt.
+            // A diagnostic that cannot be written is a warning, not a reason to end a
+            // session: the path comes from the program, and a program that asked for a
+            // dump is one that wants the session anyway.
+            let dump_frames =
+                config
+                    .dump_audio
+                    .as_ref()
+                    .and_then(|path| match std::fs::File::create(path) {
                         Ok(file) => {
                             log::info!("media     writing the audio bytes to {}", path.display());
                             Some(std::sync::Arc::new(std::sync::Mutex::new(file)))
@@ -1199,126 +1313,152 @@ pub async fn run(config: Config) -> Result<(), Error> {
                             log::warn!("rust-airplay: cannot write {}: {error}", path.display());
                             None
                         }
-                    }
-                });
-                // What arrived, so "the client is not sending" and "we are throwing it
-                // away" cannot be confused in a log. A session that never reaches the
-                // frame counter still says which sockets were written to.
-                let received = std::sync::Arc::new(crate::media::ports::Received::default());
-                let watching = std::sync::Arc::clone(&received);
-                tokio::spawn(async move {
-                    let mut last = (0u64, 0u64, 0u64, 0u64);
-                    loop {
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        let now = (
-                            watching.data(),
-                            watching.control(),
-                            watching.timing(),
-                            watching.unusable(),
+                    });
+            // What arrived, so "the client is not sending" and "we are throwing it
+            // away" cannot be confused in a log. A session that never reaches the
+            // frame counter still says which sockets were written to.
+            let received = std::sync::Arc::new(crate::media::ports::Received::default());
+            let watching = std::sync::Arc::clone(&received);
+            let reporter = tokio::spawn(async move {
+                let mut last = (0u64, 0u64, 0u64, 0u64);
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    let now = (
+                        watching.data(),
+                        watching.control(),
+                        watching.timing(),
+                        watching.unusable(),
+                    );
+                    if now != last {
+                        log::info!(
+                            "media     received: data {}, control {}, timing {}, unusable {}",
+                            now.0,
+                            now.1,
+                            now.2,
+                            now.3
                         );
-                        if now != last {
-                            log::info!(
-                                "media     received: data {}, control {}, timing {}, unusable {}",
-                                now.0, now.1, now.2, now.3
+                        if let Some(reason) = watching.last_error() {
+                            log::info!("media     first datagram that did not fit: {reason}");
+                        }
+                        last = now;
+                    }
+                }
+            });
+            let mut session_watch = keys.clone();
+            let outcome = tokio::select! {
+                _ = stopped(audio_stop.clone()) => Ok(()),
+                _ = session_watch.changed() => Ok(()),
+                result = audio_sockets
+                .serve(&mut session, &received, |frame| {
+                    use std::sync::atomic::Ordering;
+                    let count = frames.fetch_add(1, Ordering::Relaxed) + 1;
+                    if count == 1 {
+                        log::info!(
+                            "media     first audio frame: {} bytes, seq {}, ts {}",
+                            frame.payload.len(),
+                            frame.sequence,
+                            frame.timestamp
+                        );
+                        if let Ok(mut probe) = audio_probe.lock() {
+                            probe.audio(u64::from(frame.timestamp), audio_rate);
+                        }
+                    } else if count % 500 == 0 {
+                        log::info!("media     {count} audio frames received");
+                    }
+                    if let Some(file) = dump_frames.as_ref().and_then(|dump| dump.lock().ok()) {
+                        use std::io::Write;
+                        let length = frame.payload.len() as u32;
+                        let _ = (&*file).write_all(&length.to_le_bytes());
+                        let _ = (&*file).write_all(&frame.payload);
+                    }
+                    let queued = crate::AudioFrame {
+                        data: frame.payload,
+                        timestamp: u64::from(frame.timestamp),
+                    };
+                    if feed.try_send(queued).is_err() {
+                        let missed = dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                        if missed == 1 {
+                            log::warn!(
+                                "rust-airplay: the audio pipeline is not keeping up; \
+                                 frames are being dropped rather than stalling the session"
                             );
-                            if let Some(reason) = watching.last_error() {
-                                log::info!("media     first datagram that did not fit: {reason}");
-                            }
-                            last = now;
                         }
                     }
-                });
-                let outcome = audio_sockets
-                    .serve(&mut session, &received, |frame| {
-                        use std::sync::atomic::Ordering;
-                        let count = frames.fetch_add(1, Ordering::Relaxed) + 1;
-                        if count == 1 {
-                            log::info!(
-                                "media     first audio frame: {} bytes, seq {}, ts {}",
-                                frame.payload.len(),
-                                frame.sequence,
-                                frame.timestamp
-                            );
-                            if let Ok(mut probe) = audio_probe.lock() {
-                                probe.audio(u64::from(frame.timestamp), audio_rate);
-                            }
-                        } else if count % 500 == 0 {
-                            log::info!("media     {count} audio frames received");
-                        }
-                        if let Some(file) = dump_frames.as_ref().and_then(|dump| dump.lock().ok()) {
-                            use std::io::Write;
-                            let length = frame.payload.len() as u32;
-                            let _ = (&*file).write_all(&length.to_le_bytes());
-                            let _ = (&*file).write_all(&frame.payload);
-                        }
-                        let queued = crate::AudioFrame {
-                            data: frame.payload,
-                            timestamp: u64::from(frame.timestamp),
-                        };
-                        if feed.try_send(queued).is_err() {
-                            let missed = dropped.fetch_add(1, Ordering::Relaxed) + 1;
-                            if missed == 1 {
-                                log::warn!(
-                                    "rust-airplay: the audio pipeline is not keeping up; \
-                                     frames are being dropped rather than stalling the session"
-                                );
-                            }
-                        }
-                    }, |answer| {
-                        // One answer to one request: `t1` was the second this receiver
-                        // sent, `t2` and `t3` are the client's receive and transmit
-                        // times, and `t4` is now.
-                        let Ok(response) = crate::media::timing::parse_response(answer) else {
-                            return;
-                        };
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|since| since.as_nanos() as u64)
-                            .unwrap_or(0);
+                }, |answer| {
+                    // One answer to one request: `t1` was the second this receiver
+                    // sent, `t2` and `t3` are the client's receive and transmit
+                    // times, and `t4` is now.
+                    let Ok(response) = crate::media::timing::parse_response(answer) else {
+                        return;
+                    };
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|since| since.as_nanos() as u64)
+                        .unwrap_or(0);
 
-                        let Ok(mut clock) = clock.lock() else {
-                            return;
-                        };
-                        let seen = clock.samples_collected();
-                        if let Some(sample) = clock.response_received(
+                    let Ok(mut clock) = clock.lock() else {
+                        return;
+                    };
+                    let seen = clock.samples_collected();
+                    if let Some(sample) = clock.response_received(
+                        response.t1,
+                        response.t2,
+                        response.t3,
+                        now,
+                    ) {
+                        // Logged every time the estimate is new, which is once per
+                        // exchange in a quiet room and worth seeing: the offset is what
+                        // a schedule is built on, and a wrong one is invisible later.
+                        log::info!(
+                            "media     clock epoch {:+.3} s (client to local), \
+                             residual {:+.3} ms, delay {:.3} ms, root distance {:.3} ms, \
+                             synced {}, raw t1 {} t2 {} t3 {}",
+                            clock.fixed_offset_nanos().unwrap_or(0) as f64 / 1e9,
+                            clock.offset_nanos() as f64 / 1e6,
+                            sample.delay * 1e3,
+                            clock.root_distance_nanos() as f64 / 1e6,
+                            clock.is_synced(),
                             response.t1,
                             response.t2,
-                            response.t3,
-                            now,
-                        ) {
-                            // Logged every time the estimate is new, which is once per
-                            // exchange in a quiet room and worth seeing: the offset is what
-                            // a schedule is built on, and a wrong one is invisible later.
-                            log::info!(
-                                "media     clock epoch {:+.3} s (client to local), \
-                                 residual {:+.3} ms, delay {:.3} ms, root distance {:.3} ms, \
-                                 synced {}, raw t1 {} t2 {} t3 {}",
-                                clock.fixed_offset_nanos().unwrap_or(0) as f64 / 1e9,
-                                clock.offset_nanos() as f64 / 1e6,
-                                sample.delay * 1e3,
-                                clock.root_distance_nanos() as f64 / 1e6,
-                                clock.is_synced(),
-                                response.t1,
-                                response.t2,
-                                response.t3
-                            );
-                        } else if seen == 0 {
-                            log::debug!("media     timing answer ignored: not an answer to a request");
+                            response.t3
+                        );
+                    } else if seen == 0 {
+                        log::debug!("media     timing answer ignored: not an answer to a request");
+                    }
+                })
+                => result,
+            };
+            drop(feed);
+            if let Some(playing) = playing {
+                let _ = playing.join();
+            }
+            log::info!(
+                "media     {} audio frames played of {}, {} dropped",
+                played.load(std::sync::atomic::Ordering::Relaxed),
+                frames.load(std::sync::atomic::Ordering::Relaxed),
+                dropped.load(std::sync::atomic::Ordering::Relaxed)
+            );
+            let failed = outcome.is_err();
+            if let Err(error) = outcome {
+                log::warn!("rust-airplay: the media session stopped: {error}");
+            }
+            reporter.abort();
+            timing_task.abort();
+            if *audio_stop.borrow() {
+                return;
+            }
+            if failed {
+                // The socket failed while this key was current. Reopening it would
+                // only fail again, so wait for the next `SETUP` or a teardown.
+                while *keys.borrow() == Some(session_key) {
+                    tokio::select! {
+                        _ = stopped(audio_stop.clone()) => return,
+                        changed = keys.changed() => {
+                            if changed.is_err() {
+                                return;
+                            }
                         }
-                    })
-                    .await;
-                drop(feed);
-                if let Some(playing) = playing {
-                    let _ = playing.join();
-                }
-                log::info!(
-                    "media     {} audio frames played of {}, {} dropped",
-                    played.load(std::sync::atomic::Ordering::Relaxed),
-                    frames.load(std::sync::atomic::Ordering::Relaxed),
-                    dropped.load(std::sync::atomic::Ordering::Relaxed)
-                );
-                if let Err(error) = outcome {
-                    log::warn!("rust-airplay: the media session stopped: {error}");
+                    }
                 }
             }
         }
@@ -1688,7 +1828,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
             });
             let paused_feed = std::sync::Arc::clone(&feed);
             let mut was_paused = false;
-            let outcome = stream
+            let outcome = tokio::select! {
+                _ = stopped(mirror_stop.clone()) => Ok(()),
+                result = stream
                 .serve(
                     &mut session,
                     |header, bytes| {
@@ -1786,7 +1928,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
                         log::info!("media     {sent} video frames queued, {depth} waiting");
                     }
                 })
-                .await;
+                => result,
+            };
             // Dropping the queue is what ends the writer, and waiting for it is what
             // makes the count below the frames that were actually handed over.
             feed.end();
@@ -1798,6 +1941,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     ),
                     Err(_) => log::warn!("rust-airplay: the video thread ended unexpectedly"),
                 }
+            }
+            if *mirror_stop.borrow() {
+                return;
             }
             match outcome {
                 // The client closing the connection is how a mirror session ends.
@@ -1822,8 +1968,8 @@ pub async fn run(config: Config) -> Result<(), Error> {
     // volume means anything, so the two are connected here.
     let volume_renderer = Arc::clone(&config.renderer);
     let volume_curve = config.volume_curve;
-    let result = server
-        .run(move || {
+    let result = tokio::select! {
+        result = server.run(move || {
             let log = trace_log.clone();
             let mut handlers =
                 RouteHandlers::with_pairing(identity.clone(), Arc::clone(&handlers_state));
@@ -1881,9 +2027,10 @@ pub async fn run(config: Config) -> Result<(), Error> {
                         log::info!("media     video queue flushed (generation {generation})");
                     }
                 });
-                let media_key = Arc::clone(&media_key);
+                let audio_keys = audio_keys.clone();
+                let audio_generation = Arc::clone(&audio_generation);
                 let mirror_keys = Arc::clone(&mirror_keys);
-                let timing_target = Arc::clone(&timing_target);
+                let timing_target = timing_target.clone();
                 // The audio key has to outlive the request that carried it *and* the
                 // connection that served it, so it is the session's rather than this
                 // handler set's.
@@ -1953,10 +2100,9 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     // whose request had no transport at all cannot be reached.
                     match (request.client_address, request.client_timing_port) {
                         (Some(address), Some(port)) => {
-                            if let Some(sender) = lock(&timing_target).take() {
-                                let target = std::net::SocketAddr::new(address.ip(), port);
-                                let _ = sender.send(target);
-                            }
+                            let target = std::net::SocketAddr::new(address.ip(), port);
+                            timing_target.send_replace(Some(target));
+                            log::info!("media     clock exchange target {target}");
                         }
                         (address, port) => log::info!(
                             "media     no clock exchange: address {}, timingPort {}",
@@ -1964,15 +2110,27 @@ pub async fn run(config: Config) -> Result<(), Error> {
                             port.map_or("absent".to_owned(), |p| p.to_string())
                         ),
                     }
-                    // The session key starts the receive loop, once, however many
-                    // connections a client opens. It is also kept, because a device
-                    // sends its `type: 110` stream entry in a later request without
-                    // repeating the key that stream is encrypted under.
+                    // The session key starts the receive loop. It is also kept, because a
+                    // device sends its `type: 110` stream entry in a later request without
+                    // repeating the key that stream is encrypted under. A reconnecting
+                    // client sends a new key, and the watch channel carries it to the
+                    // loop that is already running: a one-shot delivery would keep
+                    // decrypting the second session with the first session's key.
                     if let (Some(key), Some(iv)) = (request.audio_key, request.audio_iv) {
                         *lock(&session_audio_key) = Some(key);
-                        if let Some(sender) = lock(&media_key).take() {
-                            let _ = sender.send((key, iv));
-                            log::info!("*** media session keyed, audio can arrive ***");
+                        let current = *audio_keys.borrow();
+                        if current.map(|session| (session.key, session.iv)) != Some((key, iv)) {
+                            let generation = audio_generation
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                + 1;
+                            audio_keys.send_replace(Some(SessionKey {
+                                key,
+                                iv,
+                                generation,
+                            }));
+                            log::info!(
+                                "*** media session {generation} keyed, audio can arrive ***"
+                            );
                         }
                     }
                     // The mirror stream's key is the audio key hashed with the
@@ -2065,10 +2223,38 @@ pub async fn run(config: Config) -> Result<(), Error> {
                     let _ = writeln!(&mut *lock(log), "{line}");
                 }
             });
+            // A `TEARDOWN` ends the media session: the key, the clock target and the
+            // flush slots belong to that session and are released here rather than
+            // left for the next client to overwrite.
+            {
+                let audio_keys = audio_keys.clone();
+                let timing_target = timing_target.clone();
+                let mirror_keys = Arc::clone(&mirror_keys);
+                let session_audio_key = Arc::clone(&session_audio_key);
+                let audio_flushing = Arc::clone(&audio_flush);
+                let video_flushing = Arc::clone(&video_flush);
+                let declared = Arc::clone(&declared_audio);
+                handlers.set_teardown_callback(move || {
+                    *lock(&session_audio_key) = None;
+                    audio_keys.send_replace(None);
+                    timing_target.send_replace(None);
+                    lock(&mirror_keys).send_replace(None);
+                    *lock(&audio_flushing) = None;
+                    *lock(&video_flushing) = None;
+                    if let Ok(mut slot) = declared.lock() {
+                        *slot = None;
+                    }
+                    log::info!("media     session torn down");
+                });
+            }
             handlers
-        })
-        .await;
-    advertiser.unregister().ok();
+        }) => result,
+        _ = stopped(stopping.clone()) => Ok(()),
+    };
+    if let Some(advertiser) = advertiser {
+        advertiser.unregister().ok();
+    }
+    shutdown_task.abort();
     result.map_err(|error| Error::from(format!("the service stopped: {error}")))
 }
 #[cfg(test)]

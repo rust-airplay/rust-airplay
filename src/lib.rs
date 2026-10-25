@@ -50,6 +50,11 @@
 //! threads. [`render::Renderer`] and its streams are therefore `Send + Sync`, and audio and
 //! video may call into them concurrently.
 //!
+//! [`receiver::run`] stops on Ctrl+C; [`receiver::serve`] is the same receiver with the stop
+//! condition supplied by the caller, which is what a test or a program with its own signal
+//! uses. A new `SETUP` carrying an audio key replaces the session the media loop is reading,
+//! so one receiver process serves a client that reconnects.
+//!
 //! The crate does not print and does not touch the filesystem. It reports through the `log`
 //! crate, and everything a program would otherwise have to know - the PIN, artwork, metadata,
 //! the client list, where a trace goes - is a value or a callback on [`receiver::Config`].
@@ -116,7 +121,7 @@ pub mod wire;
 
 pub use receiver::{
     ArtworkCallback, Config, Error as ReceiverError, MetadataCallback, PinCallback,
-    RemoteControlCallback, run,
+    RemoteControlCallback, run, serve,
 };
 pub use render::{
     AudioCodec, AudioConfig, AudioFrame, AudioStream, NullRenderer, RenderError, Renderer,

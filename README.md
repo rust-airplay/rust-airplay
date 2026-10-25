@@ -58,8 +58,10 @@ Three fields decide what a program has to do around `run`:
 - `on_pin` is called with the one-time PIN as it is drawn. It is the one thing a person at the
   keyboard has to see, and the library does not print.
 
-`run` serves clients until the process stops: it is not a server object with a shutdown
-handle, and a program ends it the way it ends any other process.
+`run` serves clients until Ctrl+C. A program that owns the stop condition - a test, a service
+manager, an embedded controller - calls `serve(config, shutdown)` instead; it returns `Ok(())`
+when the future completes, having stopped the control service and withdrawn the advertisement.
+Neither is a server object with a shutdown handle: the caller decides when the receiver stops.
 
 ## Playing the media
 

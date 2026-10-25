@@ -18,6 +18,18 @@ pub async fn run(config: Config) -> Result<(), Error>
 客户端。每条控制连接有自己的处理器集合；媒体会话在连接之间共享，因为客户端的音频密钥在一个
 `SETUP` 里到达，镜像流标识在之后的另一个 `SETUP` 里，而且可能走另一条连接。
 
+`run` 是进程入口：它由 Ctrl+C 停止。需要别的停止条件的程序——一个信号、一条命令、一个测试——
+调用 `serve`，把"何时应当返回"的 future 交给它：
+
+```rust
+pub async fn serve<F>(config: Config, shutdown: F) -> Result<(), Error>
+where
+    F: Future<Output = ()> + Send + 'static
+```
+
+它的 `Ok(())` 表示停止 future 已完成、控制服务已停止、mDNS 广播已撤回。服务不止一个客户端的
+接收端用的就是这个形状：带新密钥的 `SETUP` 会替换音频循环正在读的会话，上一场会话的流会被关闭。
+
 `Ok()` 表示接收端被要求停止。`Err` 是阻止启动的失败：
 
 - 控制端口无法绑定；
@@ -49,13 +61,15 @@ rust_airplay::run(config).await?;
 | --- | --- | --- |
 | `name` | `String` | 客户端菜单里显示的名字 |
 | `port` | `u16` | 控制端口；`0` 表示绑定临时端口，并广播实际拿到的那个 |
+| `bind` | `IpAddr` | 控制与媒体套接字绑定的地址；默认 `0.0.0.0`，只在本地可改用 `127.0.0.1` |
+| `advertise` | `bool` | 是否注册 mDNS 记录；关闭后客户端必须被直接告知地址 |
 | `seed` | `[u8; 32]` | 所有身份密钥派生的秘密；同一种子让接收端跨重启保持可识别 |
 | `device_id` | `Option<String>` | 要广播的硬件地址；`None` 时从种子派生 |
 | `pin` | `PinMode` | `Disabled`、`OneTime` 或 `Fixed(数字)`。PIN 通过 `on_pin` 报告 |
 | `password` | `Option<String>` | 设置后 `SETUP` 还要校验 digest 口令 |
 | `audio_codec` | `AudioCodec` | 客户端从未在 `SETUP` 中声明 `ct` 时使用的编码；有声明时以声明为准 |
 | `renderer` | `Arc<dyn Renderer>` | 由什么播放媒体 |
-| `clients` | `Arc<Mutex<HashSet<[u8; 32]>>>` | 已验证的客户端密钥；启动时读取，验证通过时追加 |
+| `clients` | `Arc<Mutex<HashSet<[u8; 32]>>>` | 已验证的客户端密钥；启动时读取，验证通过时追加。配置 PIN 时这张表还决定客户端能否免配对直接 verify；PIN 关闭时 legacy setup 是唯一入口，此表只作记录 |
 | `on_client` | `Option<ClientCallback>` | 客户端首次验证通过时调用，供调用方持久化密钥 |
 | `trace_log` | `Option<PathBuf>` | 设置后把请求轨迹追加到这里 |
 | `dump_video` | `Option<PathBuf>` | 设置后把最初的视频帧以 Annex-B 追加到这里 |

@@ -339,7 +339,18 @@ impl MediaSockets {
         loop {
             select! {
                 result = self.data.recv(&mut audio) => {
-                    let length = result?;
+                    let length = match result {
+                        Ok(length) => length,
+                        // A UDP socket reports an ICMP unreachable as a read error on
+                        // Windows. That says something about the last datagram this
+                        // session sent, not about the socket: treating it as fatal ends
+                        // a session that is still perfectly readable.
+                        Err(error) if is_transient(&error) => {
+                            received.reject(error.to_string());
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    };
                     received.data.fetch_add(1, Ordering::Relaxed);
                     match session.receive(&audio[..length]) {
                         Ok(frames) => {
@@ -351,7 +362,14 @@ impl MediaSockets {
                     }
                 }
                 result = self.control.recv(&mut control) => {
-                    let length = result?;
+                    let length = match result {
+                        Ok(length) => length,
+                        Err(error) if is_transient(&error) => {
+                            received.reject(error.to_string());
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    };
                     received.control.fetch_add(1, Ordering::Relaxed);
                     match session.receive_control(&control[..length]) {
                         Ok(frames) => {
@@ -367,13 +385,37 @@ impl MediaSockets {
                     // the client sends back, so the socket has to be drained here as well
                     // as written to. What the answer means is the caller's: this only
                     // reports the bytes and counts them.
-                    let length = result?;
+                    let length = match result {
+                        Ok(length) => length,
+                        Err(error) if is_transient(&error) => {
+                            received.reject(error.to_string());
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    };
                     received.timing.fetch_add(1, Ordering::Relaxed);
                     on_timing(&timing[..length]);
                 }
             }
         }
     }
+}
+
+/// Whether a UDP read error describes the network rather than this socket.
+///
+/// A receiver that sends a timing request to a client which has already gone can be
+/// told about it by an ICMP unreachable; on Windows that arrives as
+/// `ConnectionReset` on the next read. The socket is still usable, so a session must
+/// not be torn down by a message about a datagram that was never part of the media.
+fn is_transient(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::WouldBlock
+    )
 }
 
 /// One mirroring client's connection.

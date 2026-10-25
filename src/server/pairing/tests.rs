@@ -608,6 +608,96 @@ fn pair_verify_accepts_a_registered_client() {
 }
 
 #[test]
+fn legacy_setup_does_not_bypass_the_registration_predicate() {
+    let shared = Arc::new(
+        PairingState::with_random(
+            IDENTITY_SEED,
+            PinMode::Disabled,
+            Box::new(FixedRandom::new()),
+        )
+        .with_client_registered(|_| false),
+    );
+    let mut session = PairingSession::new(Arc::clone(&shared));
+    let client = VerifyClient::new();
+    // `/pair-setup` carries no secret; it only asks for the receiver's public key.
+    let reply = session.setup(&[0u8; 32]).expect("legacy setup");
+    assert_eq!(body_of(&reply).len(), ED25519_KEY_SIZE);
+    assert!(
+        matches!(
+            session.verify(&client.handshake_body()),
+            Ok(PairingReply::Silence)
+        ),
+        "a legacy setup must not make an unregistered client verifiable"
+    );
+    assert_eq!(session.status, Status::Setup);
+    assert!(session.registration_refused);
+}
+
+#[test]
+fn legacy_setup_still_verifies_a_registered_client() {
+    let shared = Arc::new(
+        PairingState::with_random(
+            IDENTITY_SEED,
+            PinMode::Disabled,
+            Box::new(FixedRandom::new()),
+        )
+        .with_client_registered(|_| true),
+    );
+    let mut session = PairingSession::new(Arc::clone(&shared));
+    let client = VerifyClient::new();
+    session.setup(&[0u8; 32]).expect("legacy setup");
+    let reply = session.verify(&client.handshake_body()).expect("handshake");
+    assert_eq!(body_of(&reply).len(), 96);
+    assert_eq!(session.status, Status::Handshake);
+}
+
+#[test]
+fn a_password_lockout_is_a_window_not_a_permanent_stop() {
+    let state = PairingState::new(IDENTITY_SEED, PinMode::Disabled)
+        .with_password("secret")
+        .with_password_lockout(std::time::Duration::from_millis(20));
+    let authorization = |offered: &str| crate::pairing::DigestAuthorization {
+        username: "client".to_owned(),
+        realm: "raop".to_owned(),
+        nonce: "0123456789abcdef".to_owned(),
+        uri: "/stream".to_owned(),
+        response: crate::pairing::digest_auth_response(
+            "SETUP",
+            "client",
+            "raop",
+            offered,
+            "0123456789abcdef",
+            "/stream",
+            None,
+            None,
+            None,
+        ),
+        qop: None,
+        nonce_count: None,
+        client_nonce: None,
+    };
+    let wrong = authorization("wrong");
+    for _ in 0..MAX_PASSWORD_FAILURES {
+        assert!(state.verify_password_digest("SETUP", &wrong).is_err());
+    }
+    // Inside the window, even the right password is refused.
+    assert!(
+        state
+            .verify_password_digest("SETUP", &authorization("secret"))
+            .is_err()
+    );
+    assert_eq!(state.password_failures(), MAX_PASSWORD_FAILURES);
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    // After the window a correct password works again and the count is cleared.
+    assert!(
+        state
+            .verify_password_digest("SETUP", &authorization("secret"))
+            .is_ok()
+    );
+    assert_eq!(state.password_failures(), 0);
+}
+
+#[test]
 fn setup_pin_bounds_the_work_one_connection_can_cause() {
     let shared = state(PinMode::Fixed(1234));
     let mut session = PairingSession::new(Arc::clone(&shared));
