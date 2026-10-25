@@ -39,7 +39,9 @@
 //! The future never returns `Ok` in a process that is not asked to stop; a program that ends
 //! the receiver ends the future, which is the same as the stop signal.
 
+mod audio_task;
 mod config;
+mod mirror_task;
 mod runtime;
 mod serve;
 mod state;

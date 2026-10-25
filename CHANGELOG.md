@@ -61,7 +61,11 @@
   (packet, session, reorder), `media::ports` (sockets, mirror), `render` (codec, volume,
   frames, traits, null), `control` (route, dispatch, types, session), `media::timing`
   (request, clock) and `server::handlers::routes` (setup, parameters, info, pairing,
-  helpers). Public paths are unchanged; `receiver::serve` remains one orchestration file.
+  helpers). Public paths are unchanged.
+- `receiver::serve` no longer owns the task bodies: the audio receive loop is `AudioTask`
+  and the mirror listener is `MirrorTask`, each taking its state explicitly. `playfair`
+  separates garble from the session-key layer, `plist` separates the types from the
+  structural check, and `discovery` separates the advertisement from the registrar.
 
 ### Added
 
