@@ -238,9 +238,8 @@ legitimate choice.
 
 ## Versioning
 
-The latest published release is 0.2.0. This tree is the 0.3.0 development line: its changes
-are under `Unreleased` in the changelog, and the public API has the breaking changes listed
-there. Version 1.0 is the point where the API is frozen.
+Version 0.3.0. The 0.2.0 release is the previous one; the public API changes that made this
+a minor version are in the changelog. Version 1.0 is the point where the API is frozen.
 
 Growth-prone public types - `Config`, `ServerConfig`, `SetupRequest`, the codec enums,
 `RenderError`, `PinMode` and `SessionAuth` - are `#[non_exhaustive]`: construct them through

@@ -25,7 +25,7 @@ files it can write are asked for explicitly: `Config::trace_log` and the two dia
 
 ```toml
 [dependencies]
-rust-airplay = "0.2"
+rust-airplay = "0.3"
 ```
 
 Rust 1.85 or newer, 2024 edition. The crate links no C library.
@@ -98,9 +98,8 @@ documentation on [docs.rs](https://docs.rs/rust-airplay).
 
 ## Status
 
-The latest published release is 0.2.0. `main` is the 0.3.0 development line: the changes
-since that release are under `Unreleased` in the changelog, and they include public API
-changes that a downstream crate has to account for.
+Version 0.3.0. The 0.2.0 release is the previous one; the changes that made this a minor
+version, including the public API changes, are in the changelog.
 
 The protocol path is exercised by real-socket integration tests, property tests and synthetic
 packet vectors. A real-device matrix (iPhone/iPadOS/macOS, AirPlay 1 and 2, pairing, mirroring

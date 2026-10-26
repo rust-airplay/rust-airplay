@@ -220,8 +220,8 @@ H.264——而且在第一帧之前就已知，因为客户端的 codec 包先�
 
 ## 版本
 
-最新发布版是 0.2.0。本树是 0.3.0 开发线：变更记录在 CHANGELOG 的 `Unreleased` 下，公开 API
-的破坏性变化也在那里列出。1.0 是 API 冻结的节点。
+版本 0.3.0。0.2.0 是上一个发布版；使它成为小版本的公开 API 变化记录在 CHANGELOG 中。
+1.0 是 API 冻结的节点。
 会增长的公开类型——`Config`、`ServerConfig`、`SetupRequest`、编码枚举、`RenderError`、`PinMode`
 与 `SessionAuth`——都标了 `#[non_exhaustive]`：通过构造器或默认值创建它们，匹配枚举时保留通配
 分支。这样后续版本增加字段或变体就不会破坏调用方。许可证为 GPL-3.0-or-later。

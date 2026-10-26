@@ -21,7 +21,7 @@
 
 ```toml
 [dependencies]
-rust-airplay = "0.2"
+rust-airplay = "0.3"
 ```
 
 需要 Rust 1.85 或更新版本，2024 edition。crate 不链接任何 C 库。
@@ -74,8 +74,7 @@ API 参考是源码构建出的 rustdoc：`cargo doc --open`，或 [docs.rs](htt
 
 ## 状态
 
-最新发布版是 0.2.0。`main` 是 0.3.0 开发线：该版本之后的变更记录在 CHANGELOG 的 `Unreleased`
-下，其中包含下游 crate 需要处理的公开 API 变化。
+版本 0.3.0。0.2.0 是上一个发布版；使它成为小版本的变化（包括公开 API 变化）记录在 CHANGELOG 中。
 
 协议路径有真实套接字集成测试、property 测试与合成包向量覆盖。真机矩阵（iPhone/iPadOS/macOS、
 AirPlay 1 与 2、配对、投屏与音频）仍未完成，因此线上网络部署应按测试部署对待，而不是生产可用

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 ### Fixed
 
@@ -81,8 +81,8 @@
   tested graph and the published graph are the same. CI regenerates the plist fixtures and
   refuses a diff, and Dependabot tracks Cargo dependencies and Actions.
 - Documentation follows the split: `ARCHITECTURE.md` records the module layout, the one media
-  session rule and the security boundaries; `README.md` and `API.md` distinguish the released
-  0.2.0 from the 0.3.0 development line; `BUILD.md` covers the lock policy, the fixture CI and
+  session rule and the security boundaries; `README.md` and `API.md` record the 0.3.0
+  release and the previous 0.2.0; `BUILD.md` covers the lock policy, the fixture CI and
   Trusted Publishing; `MIGRATION.md` lists the 0.3.0 API changes.
 
 ### Added

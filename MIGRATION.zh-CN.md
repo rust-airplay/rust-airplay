@@ -41,10 +41,9 @@ rust-airplay = { git = "https://github.com/rust-airplay/rust-airplay", branch = 
 - 视频流在第一帧才打开，而不是连接建立时打开，因为客户端的 codec 配置在首帧之前到达，那是编码第一次可知的时刻。
 - 文档只描述库。命令行选项移到客户端的 README。
 
-## 0.3.0 开发线
+## 0.3.0 发布
 
-`0.2.0` 是最后一个已发布版本。`main` 上其后的变化是 1.0 之前的一次破坏性步骤，因此下一个版本是
-`0.3.0`，而不是补丁版：
+`0.3.0` 是 `0.2.0` 之后的版本。它是 1.0 之前的一次破坏性步骤，而不是补丁版：
 
 - `Config`、`ServerConfig`、`SetupRequest`、编码枚举、`RenderError`、`PinMode` 与 `SessionAuth`
   都标了 `#[non_exhaustive]`。配置类型通过 `Config::new` 或 `ServerConfig::default` 构造，匹配
