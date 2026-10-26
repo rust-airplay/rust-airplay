@@ -52,7 +52,7 @@ cargo package --allow-dirty --locked
 
 ## 持续集成
 
-`.github/workflows/ci.yml` 在每次 push 和 pull request 时于 Ubuntu、Windows 与 macOS 运行：格式检查、测试、doctest、`-D warnings` 下的 clippy 与 rustdoc，以及 `cargo package --list`，全部带 `--locked`。另有一个 job 在最低支持 Rust 版本上检查 crate，避免依赖悄悄提高自己的 MSRV。Ubuntu 上还会重新生成 `tests/fixtures/` 并拒绝任何 diff，这样生成器与提交的 fixture 不会漂移。Dependabot 负责更新 Cargo 依赖与 GitHub Actions 标签。
+`.github/workflows/ci.yml` 在每次 push 和 pull request 时于 Ubuntu 与 Windows 运行：格式检查、测试、doctest、`-D warnings` 下的 clippy 与 rustdoc，以及 `cargo package --list`，全部带 `--locked`。另有一个 job 在最低支持 Rust 版本上检查 crate，避免依赖悄悄提高自己的 MSRV。Ubuntu 上还会重新生成 `tests/fixtures/` 并拒绝任何 diff，这样生成器与提交的 fixture 不会漂移。Dependabot 负责更新 Cargo 依赖与 GitHub Actions 标签。
 
 `Publish to crates.io` 由 Actions 页面手动触发。它会重新运行测试、doctest、clippy、rustdoc 与打包列表，然后从 `main` 发布。条件允许时应优先使用 crates.io Trusted Publishing（绑定仓库的 OIDC 身份）；当前工作流使用仓库 secret `CARGO_REGISTRY_TOKEN`，它应只作用于本仓库并定期轮换。发布前的提交应包含版本号与变更日志。`dry_run` 只打包与校验，不上传。
 

@@ -66,7 +66,7 @@ before a release. `cargo publish` is the release step and is done from a clean t
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every push and pull request on Ubuntu, Windows and macOS:
+`.github/workflows/ci.yml` runs on every push and pull request on Ubuntu and Windows:
 the format check, the tests, the doctests, clippy and rustdoc under `-D warnings`, and
 `cargo package --list`, all with `--locked`. A separate job checks the crate on the minimum
 supported Rust, so a dependency that raises its own MSRV cannot break the promise quietly. On

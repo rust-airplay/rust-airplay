@@ -78,12 +78,12 @@
 - `wire` separates its limits, message head and parser, and `pairing` separates the key
   derivations from the Digest helpers. Public paths are unchanged.
 - `Cargo.lock` is committed and CI, the MSRV job and release builds use `--locked`, so the
-  tested graph and the published graph are the same. CI now includes macOS, regenerates the
-  plist fixtures and refuses a diff, and Dependabot tracks Cargo dependencies and Actions.
+  tested graph and the published graph are the same. CI regenerates the plist fixtures and
+  refuses a diff, and Dependabot tracks Cargo dependencies and Actions.
 - Documentation follows the split: `ARCHITECTURE.md` records the module layout, the one media
   session rule and the security boundaries; `README.md` and `API.md` distinguish the released
-  0.2.0 from the 0.3.0 development line; `BUILD.md` covers the lock policy, the macOS/fixture
-  CI and Trusted Publishing; `MIGRATION.md` lists the 0.3.0 API changes.
+  0.2.0 from the 0.3.0 development line; `BUILD.md` covers the lock policy, the fixture CI and
+  Trusted Publishing; `MIGRATION.md` lists the 0.3.0 API changes.
 
 ### Added
 

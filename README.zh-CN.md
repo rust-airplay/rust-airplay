@@ -79,7 +79,7 @@ API 参考是源码构建出的 rustdoc：`cargo doc --open`，或 [docs.rs](htt
 
 协议路径有真实套接字集成测试、property 测试与合成包向量覆盖。真机矩阵（iPhone/iPadOS/macOS、
 AirPlay 1 与 2、配对、投屏与音频）仍未完成，因此线上网络部署应按测试部署对待，而不是生产可用
-声明。CI 覆盖 Linux、Windows、macOS 与 1.85 最低版本。
+声明。CI 覆盖 Linux、Windows 与 1.85 最低版本。
 
 1.0 是 API 冻结的节点，前提是上述设备证据已经具备。
 

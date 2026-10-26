@@ -105,7 +105,7 @@ changes that a downstream crate has to account for.
 The protocol path is exercised by real-socket integration tests, property tests and synthetic
 packet vectors. A real-device matrix (iPhone/iPadOS/macOS, AirPlay 1 and 2, pairing, mirroring
 and audio) is still outstanding, so a live network deployment should be treated as a test
-deployment, not as a production claim. CI covers Linux, Windows, macOS and the 1.85 minimum.
+deployment, not as a production claim. CI covers Linux, Windows and the 1.85 minimum.
 
 Version 1.0 is the point where the API is frozen, after that device evidence exists.
 
