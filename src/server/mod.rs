@@ -89,9 +89,10 @@ pub struct ServerConfig {
     ///
     /// The protocol's `-nohold`. Off by default: a second client's connection is refused, as
     /// the protocol refuses it with `409 Conflict` when a session is already running
-    /// Turned on, a new connection drops the previous one, which is
-    /// what a person switching phones expects. This crate admits several connections at
-    /// once by default, so the flag only adds the takeover.
+    /// Turned on, a new connection drops the previous one **from the same host**, which
+    /// is what a person switching phones expects. A connection from another host keeps
+    /// its slot: it is another client, not the session being replaced. This crate admits
+    /// several connections at once by default, so the flag only adds the takeover.
     pub nohold: bool,
     /// How long a session may go without a `/feedback` request before it is closed.
     ///
@@ -208,8 +209,9 @@ impl Server {
         let audio_delay_micros = self.config.audio_delay_micros;
         let nohold = self.config.nohold;
         let feedback_timeout = self.config.feedback_timeout;
-        // Every connection still being served, so `nohold` can stop the previous one.
-        let live: Arc<std::sync::Mutex<Vec<tokio::task::AbortHandle>>> =
+        // Every connection still being served, so `nohold` can stop the previous one
+        // from the same host. A different host is a different client and keeps its slot.
+        let live: Arc<std::sync::Mutex<Vec<(std::net::IpAddr, tokio::task::AbortHandle)>>> =
             Arc::new(std::sync::Mutex::new(Vec::new()));
         loop {
             // Taking a slot before accepting is what keeps the connection count
@@ -226,10 +228,10 @@ impl Server {
                 Err(error) => return Err(error),
             };
             let handlers = new_handlers();
+            let peer_ip = peer.ip();
             let task = tokio::spawn(async move {
                 let _slot = slot;
-                // The protocol logs this failure and drops the connection.
-                let _ = connection::serve(
+                if let Err(error) = connection::serve(
                     socket,
                     peer,
                     handlers,
@@ -237,18 +239,26 @@ impl Server {
                     audio_delay_micros,
                     feedback_timeout,
                 )
-                .await;
+                .await
+                {
+                    log::debug!("control connection ended: {error}");
+                }
             });
             let mut live = live
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if nohold {
-                for previous in live.drain(..) {
-                    previous.abort();
-                }
+                live.retain(|(ip, handle)| {
+                    if *ip == peer_ip {
+                        handle.abort();
+                        false
+                    } else {
+                        true
+                    }
+                });
             }
-            live.retain(|handle| !handle.is_finished());
-            live.push(task.abort_handle());
+            live.retain(|(_, handle)| !handle.is_finished());
+            live.push((peer_ip, task.abort_handle()));
         }
     }
 }

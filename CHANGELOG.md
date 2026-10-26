@@ -41,6 +41,15 @@
 - The plist fixture's `ct` is 2 (ALAC), matching the code and upstream UxPlay.
 - The 1.85 minimum is true again: the `let` chains in the control, feedback and mirror
   paths are rewritten as nested conditions, which is what the new MSRV CI job checks.
+- The plist check refuses OpenStep/ASCII plists instead of bypassing the depth and object
+  bounds; binary and XML plists remain accepted.
+- Audio and video dumps write through a bounded queue to a writer thread, so a slow disk
+  cannot block a receive loop; when the queue is full the diagnostic copy is dropped.
+- The mirror packet reporter is aborted when its connection ends instead of running every
+  five seconds for the rest of the process.
+- A control connection failure is logged at debug level instead of discarded.
+- `nohold` drops the previous connection from the same host only; a connection from
+  another host keeps its slot.
 
 ### Changed
 
@@ -66,6 +75,8 @@
   and the mirror listener is `MirrorTask`, each taking its state explicitly. `playfair`
   separates garble from the session-key layer, `plist` separates the types from the
   structural check, and `discovery` separates the advertisement from the registrar.
+- `wire` separates its limits, message head and parser, and `pairing` separates the key
+  derivations from the Digest helpers. Public paths are unchanged.
 
 ### Added
 

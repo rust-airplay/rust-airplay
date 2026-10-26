@@ -235,6 +235,14 @@ mod tests {
     }
 
     #[test]
+    fn refuses_a_plist_format_it_cannot_bound() {
+        assert!(matches!(
+            Plist::parse(b"{ streams = (); }"),
+            Err(PlistError::Decode(_))
+        ));
+    }
+
+    #[test]
     fn root_must_be_a_dictionary_for_keyed_access() {
         let plist = Plist::parse(b"<?xml version=\"1.0\"?><plist version=\"1.0\"><array/></plist>")
             .unwrap();

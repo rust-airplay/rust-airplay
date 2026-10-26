@@ -336,15 +336,33 @@ impl MirrorTask {
             // The video dump is opened here, once, for the same reason: it names a file the
             // first frames are written to, and opening it per frame would make a diagnostic
             // cost something in every session that does not use it.
-            let mut dumping = dump_video.clone().and_then(|path| {
-                std::fs::OpenOptions::new()
+            let dumping = dump_video.clone().and_then(|path| {
+                match std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(&path)
-                    .map_err(|error| {
-                        log::warn!("rust-airplay: cannot write {}: {error}", path.display())
-                    })
-                    .ok()
+                {
+                    Ok(mut file) => {
+                        log::info!("media     writing the video bytes to {}", path.display());
+                        // The receive loop must not wait for a disk. A bounded queue and
+                        // one writer thread keep a slow file from stalling the socket;
+                        // the diagnostic copy drops frames rather than the picture.
+                        let (sender, receiver) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
+                        std::thread::spawn(move || {
+                            use std::io::Write;
+                            for bytes in receiver {
+                                if file.write_all(&bytes).is_err() {
+                                    break;
+                                }
+                            }
+                        });
+                        Some(sender)
+                    }
+                    Err(error) => {
+                        log::warn!("rust-airplay: cannot write {}: {error}", path.display());
+                        None
+                    }
+                }
             });
             let received = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             let received_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -360,7 +378,7 @@ impl MirrorTask {
             // The recent packets live beside the census and are read the same way.
             let recent_source = std::sync::Arc::clone(&watching_census);
             let watching_recent = move || recent_source.recent();
-            tokio::spawn(async move {
+            let reporter = tokio::spawn(async move {
                 let mut last = (0u64, 0u64, 0u64);
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -499,15 +517,13 @@ impl MirrorTask {
                     // merely hard to follow: `AIRPLAY_DUMP_VIDEO=<path>` writes the first
                     // frames as an Annex-B stream a second decoder can read.
                     //
-                    // The file is opened once, below, and only when the variable is set:
-                    // this runs for every frame of every session, and reading an
-                    // environment variable and opening a file per frame is a cost the
-                    // receive loop pays for a feature that is off in any session nobody is
-                    // diagnosing.
-                    if let Some(file) = dumping.as_mut() {
+                    // The file is opened once, above, and only when the variable is
+                    // set. The copy goes through a bounded queue to a writer thread, so
+                    // this runs for every frame without the receive loop waiting on a
+                    // disk; the queue drops its copy rather than the picture.
+                    if let Some(dump) = dumping.as_ref() {
                         if frames <= 30 {
-                            use std::io::Write;
-                            let _ = file.write_all(&frame.data);
+                            let _ = dump.try_send(frame.data.clone());
                         }
                     }
                     // A full queue means the picture is behind what a client sent. The
@@ -550,6 +566,7 @@ impl MirrorTask {
                     Err(_) => log::warn!("rust-airplay: the video thread ended unexpectedly"),
                 }
             }
+            reporter.abort();
             if *mirror_stop.borrow() {
                 return;
             }

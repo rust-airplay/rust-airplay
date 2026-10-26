@@ -96,9 +96,9 @@ pub struct Config {
     pub audio_latency: std::time::Duration,
     /// Whether a new client takes over from the current one.
     ///
-    /// The protocol's `-nohold`. Off by default: this crate serves several connections at once,
-    /// which is more permissive than the protocol, and the flag adds the takeover a person
-    /// switching phones expects.
+    /// The protocol's `-nohold`. Off by default: this crate serves several connections at
+    /// once, which is more permissive than the protocol. The flag drops the previous
+    /// connection from the same host; a connection from another host keeps its slot.
     pub nohold: bool,
     /// How long a session may go without `/feedback` before it is closed.
     ///

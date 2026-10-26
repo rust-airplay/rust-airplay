@@ -264,19 +264,31 @@ impl AudioTask {
             // A diagnostic that cannot be written is a warning, not a reason to end a
             // session: the path comes from the program, and a program that asked for a
             // dump is one that wants the session anyway.
-            let dump_frames =
-                dump_audio
-                    .as_ref()
-                    .and_then(|path| match std::fs::File::create(path) {
-                        Ok(file) => {
-                            log::info!("media     writing the audio bytes to {}", path.display());
-                            Some(std::sync::Arc::new(std::sync::Mutex::new(file)))
-                        }
-                        Err(error) => {
-                            log::warn!("rust-airplay: cannot write {}: {error}", path.display());
-                            None
-                        }
-                    });
+            let dump_frames = dump_audio.as_ref().and_then(|path| {
+                match std::fs::File::create(path) {
+                    Ok(mut file) => {
+                        log::info!("media     writing the audio bytes to {}", path.display());
+                        // The receive loop must not wait for a disk. A bounded queue and
+                        // one writer thread keep a slow file from stalling the sockets;
+                        // frames are dropped when the writer cannot keep up.
+                        let (sender, receiver) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
+                        std::thread::spawn(move || {
+                            use std::io::Write;
+                            for bytes in receiver {
+                                if file.write_all(&bytes).is_err() {
+                                    break;
+                                }
+                            }
+                        });
+                        Some(sender)
+                    }
+                    Err(error) => {
+                        log::warn!("rust-airplay: cannot write {}: {error}", path.display());
+                        None
+                    }
+                }
+            });
+            let dump_dropped = std::sync::atomic::AtomicU64::new(0);
             // What arrived, so "the client is not sending" and "we are throwing it
             // away" cannot be confused in a log. A session that never reaches the
             // frame counter still says which sockets were written to.
@@ -355,11 +367,18 @@ impl AudioTask {
                     } else if count % 500 == 0 {
                         log::info!("media     {count} audio frames received");
                     }
-                    if let Some(file) = dump_frames.as_ref().and_then(|dump| dump.lock().ok()) {
-                        use std::io::Write;
-                        let length = frame.payload.len() as u32;
-                        let _ = (&*file).write_all(&length.to_le_bytes());
-                        let _ = (&*file).write_all(&frame.payload);
+                    if let Some(dump) = dump_frames.as_ref() {
+                        let mut bytes = Vec::with_capacity(4 + frame.payload.len());
+                        bytes.extend_from_slice(&(frame.payload.len() as u32).to_le_bytes());
+                        bytes.extend_from_slice(&frame.payload);
+                        if dump.try_send(bytes).is_err() {
+                            let missed = dump_dropped.fetch_add(1, Ordering::Relaxed) + 1;
+                            if missed == 1 {
+                                log::warn!(
+                                    "rust-airplay: the audio dump cannot keep up;                                      frames are being dropped from the diagnostic copy"
+                                );
+                            }
+                        }
                     }
                     let queued = crate::AudioFrame {
                         data: frame.payload,

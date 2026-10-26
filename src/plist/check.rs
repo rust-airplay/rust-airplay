@@ -4,6 +4,8 @@
 use super::types::{MAX_PLIST_DEPTH, MAX_PLIST_OBJECTS, PlistError};
 
 pub(super) fn check_structure(bytes: &[u8]) -> Result<(), PlistError> {
+    // A UTF-8 byte-order mark is allowed in front of an XML declaration.
+    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
     if bytes.starts_with(b"bplist") {
         check_binary(bytes)
     } else if bytes
@@ -14,8 +16,13 @@ pub(super) fn check_structure(bytes: &[u8]) -> Result<(), PlistError> {
     {
         check_xml(bytes)
     } else {
-        // Not one of the two formats this module knows; the parser reports it.
-        Ok(())
+        // The backing parser also accepts the OpenStep/ASCII format, which has no
+        // structural bound this module can check. AirPlay uses binary plists and
+        // XML is accepted for compatibility, so anything else is refused rather
+        // than handed to a parser whose nesting is unbounded here.
+        Err(PlistError::Decode(
+            "payload is neither a binary nor an XML property list".to_owned(),
+        ))
     }
 }
 

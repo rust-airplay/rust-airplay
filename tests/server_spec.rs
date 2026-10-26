@@ -402,6 +402,41 @@ async fn answers_fairplay_setup_with_its_opaque_reply() {
 }
 
 #[tokio::test]
+async fn nohold_closes_the_previous_connection_from_the_same_host() {
+    let mut config = local_config();
+    config.nohold = true;
+    let server = TestServer::start(config, RouteHandlers::new(identity())).await;
+
+    let mut first = server.connect().await;
+    first
+        .write_all(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n")
+        .await
+        .expect("write");
+    let mut answer = [0u8; 32];
+    let _ = timeout(Duration::from_secs(2), first.read(&mut answer))
+        .await
+        .expect("the first connection answers");
+
+    // `nohold` lets the new connection replace the one from the same host.
+    let second = server.connect().await;
+    let closed = timeout(Duration::from_secs(2), async {
+        loop {
+            let mut buffer = [0u8; 64];
+            match first.read(&mut buffer).await {
+                Ok(0) => break true,
+                Ok(_) => continue,
+                Err(_) => break false,
+            }
+        }
+    })
+    .await
+    .expect("the first connection is closed");
+    assert!(closed, "the previous connection was closed");
+    drop(second);
+    server.shutdown();
+}
+
+#[tokio::test]
 async fn serves_no_more_than_the_configured_number_of_connections() {
     let mut config = local_config();
     config.max_connections = 1;
