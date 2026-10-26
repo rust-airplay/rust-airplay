@@ -22,6 +22,7 @@ jobs:
         os:
           - ubuntu-latest
           - windows-latest
+          - macos-latest
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
@@ -38,13 +39,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run the tests
-        run: cargo test --all-targets
+        run: cargo test --all-targets --locked
 
       - name: Run the doctests
-        run: cargo test --doc
+        run: cargo test --doc --locked
 
       - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Build the documentation
         env:
@@ -52,7 +53,17 @@ jobs:
         run: cargo doc --no-deps
 
       - name: Check what would be published
-        run: cargo package --list
+        run: cargo package --list --locked
+
+      # The fixtures are generated; a change to the generator or a stale file is a
+      # review problem, not a build failure, so the diff is the check.
+      - name: Regenerate the plist fixtures
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 tools/plist_fixtures.py
+
+      - name: Check that the fixtures are committed
+        if: matrix.os == 'ubuntu-latest'
+        run: git diff --exit-code -- tests/fixtures
 
   msrv:
     name: MSRV 1.85
@@ -71,4 +82,4 @@ jobs:
       # A dependency that quietly raises its own MSRV would otherwise break the
       # promise before the crate does.
       - name: Check the crate on its minimum supported Rust
-        run: cargo check --lib
+        run: cargo check --lib --locked

@@ -98,8 +98,16 @@ documentation on [docs.rs](https://docs.rs/rust-airplay).
 
 ## Status
 
-Version 0.2.0. The public API is the one this release documents; a breaking change before 1.0
-is possible but not planned. Version 1.0 is the point where the API is frozen.
+The latest published release is 0.2.0. `main` is the 0.3.0 development line: the changes
+since that release are under `Unreleased` in the changelog, and they include public API
+changes that a downstream crate has to account for.
+
+The protocol path is exercised by real-socket integration tests, property tests and synthetic
+packet vectors. A real-device matrix (iPhone/iPadOS/macOS, AirPlay 1 and 2, pairing, mirroring
+and audio) is still outstanding, so a live network deployment should be treated as a test
+deployment, not as a production claim. CI covers Linux, Windows, macOS and the 1.85 minimum.
+
+Version 1.0 is the point where the API is frozen, after that device evidence exists.
 
 ## Licence
 

@@ -16,6 +16,29 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 后端依赖本 crate 并实现 `Renderer`；程序依赖两者。方向是单向的：这里不知道后端或程序的存在。
 
+## 代码布局
+
+模块树按协议本身的分界组织；目录是一组相关子模块，不是独立 crate：
+
+```
+src/
+├── receiver/       Config、共享状态、serve 循环、AudioTask、MirrorTask
+├── server/         控制服务；handlers/（types、routes/）与 pairing/（state、session）
+├── media/          audio/、mirror/、ports/、timing/、control、dmap、pace
+├── control/        路由表、dispatch、单连接会话、wire 类型
+├── wire/           头部上限、MessageHead、解析与 body 切分
+├── plist/          值包装、结构上限、binary/XML 检查
+├── render/         trait、编码、帧、音量、NullRenderer
+├── discovery/      Advertisement 与 mdns-sd 注册器
+├── pairing/        Apple 标签的密钥派生与 Digest 辅助
+├── playfair/       PlayFair garble 与会话密钥层
+└── playfair_tables.rs、playfair/hand_garble_generated.rs
+                    生成表；不要手改
+```
+
+单元测试放在被测模块旁边：小套件写在模块文件里；模块本身是目录且测试较大时放
+`<module>/tests.rs`。`tests/` 里的集成测试只使用公开 API。
+
 ## 一次会话是什么样子
 
 客户端通过 mDNS 找到接收端，向控制端口建立 TCP 连接，在上面说 RTSP。
@@ -28,6 +51,10 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)。
 6. `TEARDOWN`，或连接关闭，结束会话。
 
 音频密钥与镜像标识正是会话要跨连接共享的原因。客户端在某次 `SETUP` 里发送音频密钥，之后的另一次 `SETUP` 里发送镜像流的 `streamConnectionID`，且不重复密钥。由于接收端按连接构建设置处理器集，按连接保存的状态会把密钥丢掉；因此密钥属于会话。
+
+## 同一时间只有一个媒体会话
+
+共享的密钥槽保存的是**一个**媒体会话，不是混音。控制连接可以同时存在多条，但最后一次携带音频密钥或镜像标识的 `SETUP` 拥有套接字、渲染器流和 flush 状态；更早的流会被替换，而不是与新流同时播放。这正是重连客户端需要的行为，也是第二个已认证客户端可以接管会话的原因。`nohold` 控制连接生命周期：开启时，来自**同一 host** 的新连接会关闭该 host 的上一条连接；来自其他 host 的连接保留自己的槽位，但一次成功的 `SETUP` 仍会成为当前媒体会话。需要更强隔离的程序要在本 crate 之外实现（网络策略、独立接收端实例，或在 accept 前使用客户端注册表）。
 
 ## 接收媒体
 
@@ -68,7 +95,7 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 线程
 
-`receiver::run` 是异步的，所有连接都跑在调用方的 Tokio 运行时上。阻塞性的工作有自己的线程：视频写入线程（持有渲染器的视频流）、音频泵（把帧推进 `appsrc`）、mDNS 广播，以及监视待定 PIN 的线程。因此渲染器在音频与视频线程之间共享，必须是 `Send + Sync`；它的流被移到写出它们的线程上，`push` 可以阻塞。
+`receiver::run` 是异步的，所有连接都跑在调用方的 Tokio 运行时上。阻塞性的工作有自己的线程：视频写入线程（持有渲染器的视频流）、音频写入线程（持有渲染器的音频流并应用 flush）、mDNS 广播，以及监视待定 PIN 的线程。因此渲染器在音频与视频线程之间共享，必须是 `Send + Sync`；它的流被移到写出它们的线程上，`push` 可以阻塞。
 
 控制连接本身从不在渲染器上阻塞：它更新状态、应答请求，并把媒体标识交给拥有套接字的会话。
 
@@ -79,6 +106,18 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)。
 ## 发现
 
 接收端同时注册 `_raop._tcp` 与 `_airplay._tcp`，并把当前客户端会读的文本记录填好。这些值不是装饰：例如 feature 位图的第 27 位决定客户端使用哪套配对协议。测试逐字段钉住了这些值，且它们取自运行中的接收端而不是头文件：头文件记录的是构建初值，程序在广播前可能改变它。
+
+## 安全边界
+
+在把接收端暴露到网络之前，程序应知道这些边界：
+
+- 控制协议是明文 RTSP。PIN 或密码认证的是控制连接，不加密会话，也不能替代网络隔离。
+- `clients` 列表只在配置了 PIN 时作为访问谓词，因为这时 `/pair-verify` 才能在不把首个 legacy 客户端锁在门外的同时使用它。PIN 关闭时它只是已验证密钥的记录，不是 allow-list；需要真正 allow-list 的程序应在接受连接之前执行。
+- 按协议定义，`/pair-pin-start` 不需要认证。待定 PIN 受失败次数与 30 秒锁定约束，因此这个端点不会给未认证 peer 无界的猜测 oracle，但它仍然可以让屏幕出现一个 PIN。
+- 媒体源过滤按 host：UDP 数据报与镜像 TCP 连接必须来自会话控制连接的主机。这不是进程级或端口级边界；同一 host 上的其他进程共享该地址。
+- `ClientPolicy` 与客户端发送的 `deviceID` 是路由提示，不是身份证明：值由 peer 选择。真正认证的是配对密钥与 PIN/密码。
+- 音视频 dump 是诊断：它们经过有界队列，慢磁盘可以丢弃诊断帧，但绝不会让接收循环等待。trace 行只含头部与状态，不含 body、密钥或签名。
+- 同一时间只有一个当前媒体会话，如上所述。第二个已认证客户端可以替换它；不能接受这一点时，请使用独立接收端或网络策略。
 
 ## 身份
 

@@ -10,10 +10,16 @@ separate repositories, and nothing here may depend on them.
 
 ```
 src/                    the library
+├── receiver/           Config, state, serve, AudioTask, MirrorTask
+├── server/             control service; handlers/ (types, routes/), pairing/ (state, session)
+├── media/              audio/, mirror/, ports/, timing/, control, dmap, pace
+├── control/            route table, dispatch, session, wire types
+├── wire/, plist/, render/, discovery/, pairing/, playfair/
 tests/                  protocol, property and integration tests, with fixtures
 tools/                  helpers that generate test fixtures; not part of the crate
-docs/                   API, build guide, architecture, backend guide; English and Chinese
+docs/                   API, architecture, build guide, backend guide; English and Chinese
 examples/               a complete renderer implementation
+Cargo.lock              committed; CI and the MSRV job use it
 ```
 
 Unit tests live with their module: inline as `#[cfg(test)] mod tests` by default, or in
@@ -21,21 +27,26 @@ Unit tests live with their module: inline as `#[cfg(test)] mod tests` by default
 for tests that use the public API; a unit test there could not see private items. No
 directory under `src/` holds only a `tests.rs`.
 
+`playfair_tables.rs` and `playfair/hand_garble_generated.rs` are generated tables. Change the
+generator, not the table, unless the task is explicitly about the generated data.
+
 ## Gates
 
 A change is finished when all of these pass:
 
 ```sh
 cargo fmt --all -- --check
-cargo test --all-targets
-cargo test --doc
-cargo clippy --all-targets -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
-cargo package --list
+cargo test --all-targets --locked
+cargo test --doc --locked
+cargo clippy --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+cargo package --list --locked
 ```
 
 `cargo package --list` is not a build: it shows what a published crate would contain, which is
-how a new document or example is caught missing from `include` in `Cargo.toml`.
+how a new document or example is caught missing from `include` in `Cargo.toml`. Dependency
+changes are made with `cargo update` and committed with the lockfile; a CI run never resolves
+a different graph on its own.
 
 ## Rules
 
@@ -62,8 +73,9 @@ measurement, a rule the protocol imposes, or a mistake that would otherwise be r
 
 ## Documentation
 
-Every document except this one exists twice, as `<name>.md` and `<name>.zh-CN.md`. The English
-version is the primary one.
+Every guide under `docs/`, and the README and MIGRATION documents, exist twice as
+`<name>.md` and `<name>.zh-CN.md`; the English version is the primary one. `CHANGELOG.md`,
+`THIRD_PARTY_NOTICES.md` and this file are single-language records and are exempt.
 
 No emoji, in any document.
 

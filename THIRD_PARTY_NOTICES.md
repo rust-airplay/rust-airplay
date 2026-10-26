@@ -44,20 +44,22 @@ synthetic and are not device captures.
   and writes the binary and XML property-list formats. `Cargo.lock` also pins its transitive
   dependencies (`quick-xml`, `indexmap`, `hashbrown`, `time`, `base64ct`, ...). Version,
   licence and MSRV details are in `Cargo.lock` and `docs/BUILD.md`.
-- The network control service depends on [`tokio`](https://crates.io/crates/tokio) 1.53.1 (MIT)
-  with the `rt-multi-thread`, `net`, `time`, `sync`, `io-util` and `macros` features, together
-  with `bytes`, `mio`, `pin-project-lite`, `socket2`, `tokio-macros` and `windows-sys`. The
-  choice, its alternatives and the MSRV evidence are in `docs/ARCHITECTURE.md`.
+- The network control service depends on [`tokio`](https://crates.io/crates/tokio) (MIT; the
+  exact version is in `Cargo.lock`) with the `rt-multi-thread`, `net`, `time`, `sync`,
+  `io-util` and `macros` features, together with `bytes`, `mio`, `pin-project-lite`,
+  `socket2`, `tokio-macros` and `windows-sys`. The choice, its alternatives and the MSRV
+  evidence are in `docs/ARCHITECTURE.md`.
 - The pairing service draws its random values - the one-time PIN, the SRP salt and private
   value, and the X25519 key pair of `/pair-verify` - from
-  [`getrandom`](https://crates.io/crates/getrandom) 0.2.15 (MIT OR Apache-2.0). It was already
-  pinned as a transitive dependency of `rand_core` before it was declared directly, so the
-  dependency set of the product is unchanged.
-- Discovery depends on [`mdns-sd`](https://crates.io/crates/mdns-sd) 0.21.5 (Apache-2.0 OR MIT),
-  a multicast-DNS responder written in Rust. `Cargo.lock` also pins its transitive dependencies
-  (`if-addrs`, `socket-pktinfo`, `socket2`, `flume`, `log`, `parking_lot`/`lock_api`,
-  `scopeguard`, `spin`, ...). The record contents this module advertises follow the AirPlay
-  discovery contract, which is what makes a stock client accept the receiver.
+  [`getrandom`](https://crates.io/crates/getrandom) (MIT OR Apache-2.0; the exact version is
+  in `Cargo.lock`). It was already pinned as a transitive dependency of `rand_core` before it
+  was declared directly, so the dependency set of the product is unchanged.
+- Discovery depends on [`mdns-sd`](https://crates.io/crates/mdns-sd) (Apache-2.0 OR MIT; the
+  exact version is in `Cargo.lock`), a multicast-DNS responder written in Rust. `Cargo.lock`
+  also pins its transitive dependencies (`if-addrs`, `socket-pktinfo`, `socket2`, `flume`,
+  `log`, `parking_lot`/`lock_api`, `scopeguard`, `spin`, ...). The record contents this module
+  advertises follow the AirPlay discovery contract, which is what makes a stock client accept
+  the receiver.
 - The renderer boundary has no dependencies: it is the trait a backend implements, the frame and
   configuration types a session hands across it, and a renderer that accepts everything and
   plays nothing (`NullRenderer`).

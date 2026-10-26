@@ -32,9 +32,9 @@ where
 ```
 
 Its `Ok(())` means the shutdown future completed, the control service stopped and the mDNS
-advertisement was withdrawn. A receiver that serves more than one client uses this shape: a
-new `SETUP` with a key replaces the session the audio loop is reading, and the previous
-session's stream is closed.
+advertisement was withdrawn. Several control connections may exist at once, but the receiver
+keeps one media session: the latest `SETUP` that carries a key or mirror identifier replaces
+the current one. `nohold` controls the connection lifetime, not the mixing of media.
 
 `Ok()` means the receiver was asked to stop. `Err` is a failure that prevented it from
 starting:
@@ -80,6 +80,7 @@ path decision and prints nothing; the only files it opens are the ones a caller 
 | `audio_codec` | `AudioCodec` | the coding used when a client never states its `ct` in `SETUP`; a declaration always wins |
 | `renderer` | `Arc<dyn Renderer>` | what plays the media |
 | `clients` | `Arc<Mutex<HashSet<[u8; 32]>>>` | client keys already verified. Read at startup, added to as clients are verified. With a PIN configured the list also decides whether a client may verify without pairing again; with the PIN disabled the legacy setup is the only way in, so the list is a record only |
+| `debug_setup_body` | `bool` | include the described `SETUP` body in `SetupRequest::debug_body`; off by default because the body carries the media key |
 | `on_client` | `Option<ClientCallback>` | called the first time a client is verified, so the caller can persist the key |
 | `trace_log` | `Option<PathBuf>` | when set, request traces are appended here |
 | `dump_video` | `Option<PathBuf>` | when set, the first video frames are appended here as Annex-B |
@@ -97,12 +98,18 @@ path decision and prints nothing; the only files it opens are the ones a caller 
 | `display` | `server::Display` | the size, refresh rate, frame cap and overscan a client reads from `/info` |
 | `client_policy` | `server::ClientPolicy` | which clients may start a session, checked in `SETUP`; a refused client is answered `403 Forbidden` |
 | `ports` | `media::ports::MediaPorts` | the four media ports; `0` lets the system choose, `MediaPorts::legacy` is the traditional fixed layout |
-| `nohold` | `bool` | a new client takes over from the current one instead of being refused |
+| `nohold` | `bool` | a new connection from the same host takes over the previous one from that host; a connection from another host keeps its slot |
 | `feedback_timeout` | `Option<Duration>` | close a session whose client stopped sending `/feedback` |
 
 The callback types are `Arc<dyn Fn(..) + Send + Sync>` and are called from the thread that met
 the event: `on_client` from the connection that verified the client, `on_pin` from the thread
 that watches for a pending PIN. Work that is slow or blocking belongs on another thread.
+
+`ClientPolicy` and the `deviceID` a client sends are routing hints, not authentication: a
+peer chooses that value. The `clients` list gates `/pair-verify` only while a PIN is
+configured; with the PIN disabled it is a record, not an allow-list. `/pair-pin-start` is
+reachable without authentication by protocol, but the failure count and the 30-second lockout
+bound it. Media datagrams are filtered by the session's **host**, not by process or port.
 
 ## The renderer contract
 
@@ -231,12 +238,17 @@ legitimate choice.
 
 ## Versioning
 
-Version 0.2.0. The public API is what this release documents; a breaking change before 1.0 is
-possible and is noted in the changelog. The crate is GPL-3.0-or-later.
+The latest published release is 0.2.0. This tree is the 0.3.0 development line: its changes
+are under `Unreleased` in the changelog, and the public API has the breaking changes listed
+there. Version 1.0 is the point where the API is frozen.
 
 Growth-prone public types - `Config`, `ServerConfig`, `SetupRequest`, the codec enums,
 `RenderError`, `PinMode` and `SessionAuth` - are `#[non_exhaustive]`: construct them through
 their constructors or defaults and match the enums with a wildcard arm. That is what lets a
 later release add a field or a variant without breaking a caller.
+
+The protocol path is exercised by real-socket integration tests and synthetic vectors. A
+real-device matrix is still outstanding, so a live deployment should be treated as a test
+deployment rather than a production claim.
 
 [`receiver`]: https://docs.rs/rust-airplay/latest/rust_airplay/receiver/index.html

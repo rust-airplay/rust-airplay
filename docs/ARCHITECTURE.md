@@ -19,6 +19,31 @@ Everything that is not the protocol lives elsewhere, one repository per decision
 A backend depends on this crate and implements `Renderer`; a program depends on both. The
 direction is one way: nothing here knows that a backend or a program exists.
 
+## Code layout
+
+The module tree follows the protocol's own seams; a directory is a set of related
+submodules, not a separate crate:
+
+```
+src/
+├── receiver/       Config, shared state, the serve loop, AudioTask, MirrorTask
+├── server/         control service; handlers/ (types, routes/) and pairing/ (state, session)
+├── media/          audio/, mirror/, ports/, timing/, control, dmap, pace
+├── control/        route table, dispatch, one connection's session, wire types
+├── wire/           head limits, MessageHead, parser and body split
+├── plist/          value wrapper, structural bounds, binary/XML checks
+├── render/         traits, codecs, frames, volume, NullRenderer
+├── discovery/      Advertisement and the mdns-sd registrar
+├── pairing/        Apple-labelled key derivations and Digest helpers
+├── playfair/       PlayFair garble and session-key layers
+└── playfair_tables.rs, playfair/hand_garble_generated.rs
+                    generated tables; not edited by hand
+```
+
+Unit tests live beside the module they test: in the file for a small suite, or in
+`<module>/tests.rs` when the module is already a directory and the suite is large. The
+integration tests in `tests/` use only the public API.
+
 ## What a session looks like
 
 A client finds the receiver through mDNS, opens a TCP connection to the control port, and
@@ -42,6 +67,19 @@ connections. A client sends the audio key in one `SETUP`, then sends the mirror 
 `streamConnectionID` in a later `SETUP` without repeating the key. Since the receiver builds
 a handler set per connection, per-connection state would lose the key; the key therefore
 belongs to the session.
+
+## One media session at a time
+
+The shared key slots hold **one** media session, not a mixer. Several control connections may
+exist at once, but the latest `SETUP` that carries an audio key or a mirror identifier owns
+the sockets, the renderer streams and the flush state; an earlier stream is replaced rather
+than played alongside the new one. This is the shape a reconnecting client needs, and it is
+also the reason a second authenticated client can take the session over. `nohold` controls
+the connection lifetime: when enabled, a new connection from the **same host** closes the
+previous one from that host. A connection from another host keeps its slot, but a successful
+new `SETUP` still becomes the current media session. Programs that need stronger isolation
+must enforce it outside this crate (network policy, separate receiver instances, or a client
+registry used before the connection is accepted).
 
 ## Receiving media
 
@@ -127,8 +165,8 @@ frame is a few hundred bytes, and its timestamps are what a renderer paces again
 ## Threads
 
 `receiver::run` is async and serves every connection on the caller's Tokio runtime. Blocking
-work has threads: the video writer (which owns the renderer's video stream), the audio pump
-(which pushes frames into an `appsrc`), the mDNS advertiser, and the thread that watches for a
+work has threads: the video writer (which owns the renderer's video stream), the audio writer
+(which owns the renderer's audio stream and applies flushes), the mDNS advertiser, and the thread that watches for a
 pending PIN. A renderer is therefore shared between the audio and video threads and must be
 `Send + Sync`; its streams are moved onto the thread that writes them, and `push` may block.
 
@@ -155,6 +193,32 @@ of the feature bitmap, for example, picks which client-pairing protocol the clie
 Values are pinned field by field in the tests, and they were taken from a running receiver
 rather than from a header, because a header records what a build starts from and the program
 may change it before advertising.
+
+## Security boundaries
+
+These are the limits a program should know before exposing a receiver:
+
+- The control protocol is RTSP in the clear. A PIN or password authenticates the control
+  connection to the receiver; it does not encrypt the session, and it is not a substitute
+  for network isolation.
+- The `clients` list is an access predicate only while a PIN is configured, because that is
+  when `/pair-verify` can use it without locking out a first legacy client. With the PIN
+  disabled it is a record of verified keys, not an allow-list. A program that needs a real
+  allow-list enforces it before accepting the connection.
+- `/pair-pin-start` is reachable without authentication, as the protocol defines it. The
+  pending PIN is bounded by the failure count and the 30-second lockout, so this endpoint
+  does not give an unauthenticated peer an unbounded guessing oracle, but it can still make
+  a PIN appear on screen.
+- Media source filtering is by host: UDP datagrams and the mirror TCP connection must come
+  from the session's control host. It is not a per-process or per-port boundary; another
+  process on the same host shares that address.
+- `ClientPolicy` and the `deviceID` a client sends are routing hints, not proof of identity:
+  a peer chooses that value. Pairing keys and the PIN/password are what authenticate.
+- The audio and video dumps are diagnostics. They are fed through bounded queues, so a slow
+  disk can drop diagnostic frames; they never make the receive loop wait. A trace line
+  carries headers and status, never a body, a key or a signature.
+- One media session is current at a time, as described above. A second authenticated client
+  can replace it; use separate receivers or network policy when that is not acceptable.
 
 ## Identity
 

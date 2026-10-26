@@ -27,8 +27,9 @@ where
     F: Future<Output = ()> + Send + 'static
 ```
 
-它的 `Ok(())` 表示停止 future 已完成、控制服务已停止、mDNS 广播已撤回。服务不止一个客户端的
-接收端用的就是这个形状：带新密钥的 `SETUP` 会替换音频循环正在读的会话，上一场会话的流会被关闭。
+它的 `Ok(())` 表示停止 future 已完成、控制服务已停止、mDNS 广播已撤回。控制连接可以同时有多条，
+但接收端只保留一个媒体会话：最后一次携带密钥或镜像标识的 `SETUP` 替换当前会话。`nohold` 控制的是
+连接生命周期，不是媒体混流。
 
 `Ok()` 表示接收端被要求停止。`Err` 是阻止启动的失败：
 
@@ -70,6 +71,7 @@ rust_airplay::run(config).await?;
 | `audio_codec` | `AudioCodec` | 客户端从未在 `SETUP` 中声明 `ct` 时使用的编码；有声明时以声明为准 |
 | `renderer` | `Arc<dyn Renderer>` | 由什么播放媒体 |
 | `clients` | `Arc<Mutex<HashSet<[u8; 32]>>>` | 已验证的客户端密钥；启动时读取，验证通过时追加。配置 PIN 时这张表还决定客户端能否免配对直接 verify；PIN 关闭时 legacy setup 是唯一入口，此表只作记录 |
+| `debug_setup_body` | `bool` | 把描述后的 `SETUP` body 放进 `SetupRequest::debug_body`；默认关闭，因为 body 携带媒体密钥 |
 | `on_client` | `Option<ClientCallback>` | 客户端首次验证通过时调用，供调用方持久化密钥 |
 | `trace_log` | `Option<PathBuf>` | 设置后把请求轨迹追加到这里 |
 | `dump_video` | `Option<PathBuf>` | 设置后把最初的视频帧以 Annex-B 追加到这里 |
@@ -87,11 +89,16 @@ rust_airplay::run(config).await?;
 | `display` | `server::Display` | 客户端从 `/info` 读到的尺寸、刷新率、帧率上限与 overscan |
 | `client_policy` | `server::ClientPolicy` | 允许哪些客户端建立会话，在 `SETUP` 时判定；被拒客户端收到 `403 Forbidden` |
 | `ports` | `media::ports::MediaPorts` | 四个媒体端口；`0` 由系统分配，`MediaPorts::legacy` 是传统的固定布局 |
-| `nohold` | `bool` | 新客户端顶替当前连接，而不是被拒绝 |
+| `nohold` | `bool` | 来自同一 host 的新连接顶替该 host 的上一条连接；其他 host 保留自己的槽位 |
 | `feedback_timeout` | `Option<Duration>` | 客户端停止发送 `/feedback` 后关闭会话 |
 
 回调类型都是 `Arc<dyn Fn(..) + Send + Sync>`，在遇到事件的那个线程上调用：`on_client` 在验证
 客户端的连接上调用，`on_pin` 在监视待定 PIN 的线程上调用。耗时或阻塞的工作应交给另一个线程。
+
+`ClientPolicy` 与客户端发送的 `deviceID` 是路由提示，不是认证：值由 peer 选择。`clients` 表只在
+配置 PIN 时约束 `/pair-verify`；PIN 关闭时它只是记录，不是 allow-list。按协议
+`/pair-pin-start` 无需认证即可访问，但失败次数与 30 秒锁定给它设了界。媒体数据报按会话的
+**host** 过滤，不是按进程或端口过滤。
 
 ## 渲染器契约
 
@@ -213,9 +220,13 @@ H.264——而且在第一帧之前就已知，因为客户端的 codec 包先�
 
 ## 版本
 
-版本 0.2.0。公开 API 就是本版本所记录的这一套；1.0 之前的破坏性变更有可能，并会记录在变更日志。
+最新发布版是 0.2.0。本树是 0.3.0 开发线：变更记录在 CHANGELOG 的 `Unreleased` 下，公开 API
+的破坏性变化也在那里列出。1.0 是 API 冻结的节点。
 会增长的公开类型——`Config`、`ServerConfig`、`SetupRequest`、编码枚举、`RenderError`、`PinMode`
 与 `SessionAuth`——都标了 `#[non_exhaustive]`：通过构造器或默认值创建它们，匹配枚举时保留通配
 分支。这样后续版本增加字段或变体就不会破坏调用方。许可证为 GPL-3.0-or-later。
+
+协议路径有真实套接字集成测试与合成向量覆盖；真机矩阵仍未完成，因此线上部署应按测试部署对待，
+而不是生产可用声明。
 
 [`receiver`]: https://docs.rs/rust-airplay/latest/rust_airplay/receiver/index.html

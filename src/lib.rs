@@ -46,7 +46,7 @@
 //!
 //! [`receiver::run`] is `async` and serves every connection on the caller's Tokio runtime, so
 //! that runtime has to be enabled. Work that blocks has a thread of its own - the video writer
-//! and the audio `appsrc` pump - and a backend is handed one frame at a time from those
+//! and the audio writer - and a backend is handed one frame at a time from those
 //! threads. [`render::Renderer`] and its streams are therefore `Send + Sync`, and audio and
 //! video may call into them concurrently.
 //!

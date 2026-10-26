@@ -7,4 +7,3 @@
 *.key
 *.pem
 *.mp4
-/Cargo.lock

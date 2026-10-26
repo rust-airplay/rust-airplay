@@ -8,6 +8,12 @@ English: [BUILD.md](BUILD.md)。
 
 C 链接器是 Rust 本身需要的：Windows 上是 MSVC 构建工具，`rustup` 装默认工具链时一并装好；其他平台用系统编译器。这个 crate 自己不链接任何 C 库，`cargo tree` 里也没有 `-sys` 依赖——这个性质值得保持，因为它让没有媒体库的机器照样能构建与测试。
 
+## 可复现性
+
+`Cargo.lock` 已提交。CI、MSRV job 与发布构建都以它为解析结果，因此依赖不会在"测试通过的那次运行"和"发布的那次运行"之间变掉。作为库的消费者仍然解析自己的依赖图；这个 lock 只服务于本仓库的构建。
+
+改依赖时用 `cargo update`（或直接改版本），跑完整门禁，并把 `Cargo.lock` 与改动一起提交。不要让 CI 意外解析出另一张依赖图。
+
 ## 构建与测试
 
 ```sh
@@ -23,11 +29,11 @@ cargo test
 
 ```sh
 cargo fmt --all -- --check
-cargo test --all-targets
-cargo test --doc
-cargo clippy --all-targets -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
-cargo package --list
+cargo test --all-targets --locked
+cargo test --doc --locked
+cargo clippy --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+cargo package --list --locked
 ```
 
 最后一条不是构建：它列出发布出去的 crate 会包含什么，是发现新文档或新示例漏进 `Cargo.toml` 的 `include` 的最省事办法。
@@ -39,16 +45,16 @@ cargo package --list
 ## 发布
 
 ```sh
-cargo package --allow-dirty
+cargo package --allow-dirty --locked
 ```
 
 打包但不发布，用来在发布前验证 `include` 列表与元数据。`cargo publish` 是发布步骤，在干净的 `main` 工作树上执行。
 
 ## 持续集成
 
-`.github/workflows/ci.yml` 在每次 push 和 pull request 时于 Ubuntu 与 Windows 运行：格式检查、测试、doctest、`-D warnings` 下的 clippy 与 rustdoc，以及 `cargo package --list`。另有一个 job 在最低支持 Rust 版本上检查 crate，避免依赖悄悄提高自己的 MSRV。
+`.github/workflows/ci.yml` 在每次 push 和 pull request 时于 Ubuntu、Windows 与 macOS 运行：格式检查、测试、doctest、`-D warnings` 下的 clippy 与 rustdoc，以及 `cargo package --list`，全部带 `--locked`。另有一个 job 在最低支持 Rust 版本上检查 crate，避免依赖悄悄提高自己的 MSRV。Ubuntu 上还会重新生成 `tests/fixtures/` 并拒绝任何 diff，这样生成器与提交的 fixture 不会漂移。Dependabot 负责更新 Cargo 依赖与 GitHub Actions 标签。
 
-`Publish to crates.io` 由 Actions 页面手动触发。它会重新运行测试与 clippy，然后从 `main` 用仓库 secret `CARGO_REGISTRY_TOKEN` 发布。`dry_run` 只打包与校验，不上传。发布前的提交应包含版本号与变更日志。
+`Publish to crates.io` 由 Actions 页面手动触发。它会重新运行测试、doctest、clippy、rustdoc 与打包列表，然后从 `main` 发布。条件允许时应优先使用 crates.io Trusted Publishing（绑定仓库的 OIDC 身份）；当前工作流使用仓库 secret `CARGO_REGISTRY_TOKEN`，它应只作用于本仓库并定期轮换。发布前的提交应包含版本号与变更日志。`dry_run` 只打包与校验，不上传。
 
 ## 播放媒体
 

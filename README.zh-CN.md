@@ -74,7 +74,14 @@ API 参考是源码构建出的 rustdoc：`cargo doc --open`，或 [docs.rs](htt
 
 ## 状态
 
-版本 0.2.0。公开 API 就是本版本所记录的这一套；1.0 之前仍有可能发生破坏性变更，但并未计划。1.0 是 API 冻结的节点。
+最新发布版是 0.2.0。`main` 是 0.3.0 开发线：该版本之后的变更记录在 CHANGELOG 的 `Unreleased`
+下，其中包含下游 crate 需要处理的公开 API 变化。
+
+协议路径有真实套接字集成测试、property 测试与合成包向量覆盖。真机矩阵（iPhone/iPadOS/macOS、
+AirPlay 1 与 2、配对、投屏与音频）仍未完成，因此线上网络部署应按测试部署对待，而不是生产可用
+声明。CI 覆盖 Linux、Windows、macOS 与 1.85 最低版本。
+
+1.0 是 API 冻结的节点，前提是上述设备证据已经具备。
 
 ## 许可证
 
