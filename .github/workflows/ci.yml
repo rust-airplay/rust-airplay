@@ -73,7 +73,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install the minimum supported Rust
-        uses: dtolnay/rust-toolchain@1.85
+        uses: dtolnay/rust-toolchain@1.120
 
       - name: Cache the build
         uses: Swatinem/rust-cache@v2
