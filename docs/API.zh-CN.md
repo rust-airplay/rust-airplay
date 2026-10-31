@@ -220,7 +220,7 @@ H.264——而且在第一帧之前就已知，因为客户端的 codec 包先�
 
 ## 版本
 
-版本 0.3.1。0.3.0 是上一个发布版；这个补丁修正镜像队列与节拍契约，变化记录在 CHANGELOG 中。
+版本 0.3.2。0.3.1 是上一个发布版；这个补丁给"溢出后等待关键帧"加上超时，变化记录在 CHANGELOG 中。
 1.0 是 API 冻结的节点。
 会增长的公开类型——`Config`、`ServerConfig`、`SetupRequest`、编码枚举、`RenderError`、`PinMode`
 与 `SessionAuth`——都标了 `#[non_exhaustive]`：通过构造器或默认值创建它们，匹配枚举时保留通配

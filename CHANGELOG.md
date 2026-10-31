@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.2
+
+### Fixed
+
+- A queue that overflowed once no longer stops the picture for the rest of the session. The
+  queue clears and waits for a key frame, and an AirPlay client only sends one when its
+  picture changes, so a mostly still screen never sent another: a real session wrote 208
+  frames, then dropped 240 while the client kept sending. The wait now has a deadline
+  (`DAMAGED_TIMEOUT_NANOS`, one second), after which the next frame is shown, damaged or
+  not, and a natural key frame repairs the picture later. A short corruption replaces a
+  frozen session.
+- The startup allowance is 120 frames or two seconds, up from 30 frames or 500 ms. A client
+  bursts twenty to thirty frames while the pipeline opens (measured: 235 to 320 ms), so the
+  old allowance was judged an overflow at the moment a session began.
+
+### Tests
+
+- A damaged stream resumes when no key frame arrives; the startup window test follows the
+  new allowance.
+
 ## 0.3.1
 
 ### Fixed
