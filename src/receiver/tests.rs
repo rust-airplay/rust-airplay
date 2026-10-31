@@ -2,7 +2,7 @@
 //! Tests for the receiver's internal helpers.
 
 use super::runtime::{ClockProbe, client_gain, describe_report};
-use super::state::{FreshestFrames, QUEUED_FRAMES, QueuedVideo};
+use super::state::{FreshestFrames, QUEUED_FRAMES, QueuedVideo, STARTUP_QUEUED_FRAMES};
 
 #[test]
 fn a_streaming_report_is_written_out_as_xml() {
@@ -24,11 +24,15 @@ fn a_streaming_report_is_written_out_as_xml() {
 }
 
 fn frame(timestamp: u64) -> QueuedVideo {
+    frame_with(timestamp, true, 0)
+}
+
+fn frame_with(timestamp: u64, idr: bool, received: u64) -> QueuedVideo {
     (
         vec![0u8; 4],
         timestamp,
-        true,
-        0,
+        idr,
+        received,
         crate::render::VideoCodec::H264,
         None,
     )
@@ -74,32 +78,66 @@ fn a_flush_drops_what_was_queued_and_tells_the_writer() {
 }
 
 #[test]
-fn a_slow_start_grows_the_queue_and_a_drain_comes_back_to_its_depth() {
-    // The frames that wait for the pipeline to open are not an overflow: at sixty a
-    // second, a quarter of a second of opening is fifteen of them, and the first version
-    // of this limit dropped that whole opening burst. The queue may grow while the
-    // stream is closed, and is only limited again once it has drained.
+fn a_startup_backlog_is_bounded_and_restarts_on_a_key_frame() {
+    // The stream has not opened yet, so frames may queue; the startup allowance is the
+    // smaller of thirty frames and five hundred milliseconds. Overflowing it clears the
+    // queued group and accepts the next key frame instead of playing a broken one.
     let queue = FreshestFrames::new();
-    for timestamp in 0..30u64 {
-        let (depth, dropped) = queue.put(frame(timestamp), false);
-        assert!(!dropped, "a closed stream must not drop frames");
-        assert_eq!(depth as u64, timestamp + 1);
+    for timestamp in 0..STARTUP_QUEUED_FRAMES as u64 {
+        let (_, dropped) = queue.put(frame(timestamp), false);
+        assert!(!dropped, "the startup allowance accepts {timestamp}");
     }
-    // Opening the stream does not judge that backlog as an overflow either.
-    let (depth, dropped) = queue.put(frame(30), true);
-    assert!(!dropped);
-    assert_eq!(depth, 31);
+    assert_eq!(queue.depth(), STARTUP_QUEUED_FRAMES);
 
-    // Draining back down to the steady depth happens by taking frames; once below it,
-    // the strict depth applies and the oldest frame goes.
-    while queue.try_take().is_some() {}
-    for timestamp in 40..48u64 {
-        assert!(!queue.put(frame(timestamp), true).1);
+    let (depth, dropped) = queue.put(frame(30), false);
+    assert!(dropped, "the startup allowance is bounded");
+    assert_eq!(depth, 1, "the key frame is kept");
+    assert_eq!(
+        queue.dropped(),
+        STARTUP_QUEUED_FRAMES as u64,
+        "the cleared group is counted"
+    );
+    assert_eq!(queue.try_take().expect("the key frame").1, 30);
+}
+
+#[test]
+fn a_startup_backlog_is_measured_in_time_too() {
+    let queue = FreshestFrames::new();
+    assert!(!queue.put(frame_with(0, true, 0), false).1);
+    assert!(!queue.put(frame_with(1, true, 100_000_000), false).1);
+    // Five hundred milliseconds is the other half of the startup allowance.
+    let (depth, dropped) = queue.put(frame_with(2, true, 600_000_000), false);
+    assert!(dropped);
+    assert_eq!(depth, 1);
+    assert_eq!(queue.dropped(), 2);
+    assert_eq!(queue.try_take().expect("the key frame").1, 2);
+}
+
+#[test]
+fn an_overflow_waits_for_a_key_frame() {
+    // A P frame refers to frames the decoder already has. Once one is missing, dropping
+    // only the oldest frame leaves every later frame referring to a picture that was
+    // never decoded. The queue clears instead, and only a key frame restarts delivery.
+    let queue = FreshestFrames::new();
+    for timestamp in 0..QUEUED_FRAMES as u64 {
+        let (_, dropped) = queue.put(frame_with(timestamp, true, 0), true);
+        assert!(!dropped);
     }
-    let (depth, dropped) = queue.put(frame(48), true);
-    assert!(dropped, "the steady depth drops the oldest frame");
-    assert_eq!(depth, QUEUED_FRAMES);
-    assert_eq!(queue.try_take().expect("a frame").1, 41);
+    assert_eq!(queue.depth(), QUEUED_FRAMES);
+
+    let (depth, dropped) = queue.put(frame_with(8, false, 0), true);
+    assert!(dropped);
+    assert_eq!(depth, 0, "a P frame cannot restart a cleared group");
+    assert!(queue.try_take().is_none());
+
+    let (depth, dropped) = queue.put(frame_with(9, false, 0), true);
+    assert!(dropped);
+    assert_eq!(depth, 0, "the next P frame is dropped too");
+
+    let (depth, dropped) = queue.put(frame_with(10, true, 0), true);
+    assert!(!dropped);
+    assert_eq!(depth, 1, "an IDR restarts delivery");
+    assert_eq!(queue.try_take().expect("the key frame").1, 10);
 }
 
 #[test]

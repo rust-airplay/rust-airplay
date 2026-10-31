@@ -96,16 +96,18 @@ Writing a mirror stream as fast as it arrives decodes faster than real time. A m
 is one key frame followed by frames that describe only what changed, so decoding too quickly
 drops frames the rest of the stream depends on, and the picture stays partly wrong.
 
-The receiver therefore offers two hooks:
+The receiver therefore has one pacing decision and one optional backend hook:
 
-- `VideoStream::set_pace(seconds)`, called before a frame with the interval since the
-  previous one, which is the spacing the stream has been arriving at. The default does
-  nothing; a backend with a clock can sleep or schedule. It is only called when
-  `Config::pace_video` is off, because when that is on the receiver does the waiting
-  itself.
-- `Config::pace_video`, which asks the receiver itself to hold each frame back before
-  calling `push`. It is off by default: a mirror is judged by how quickly the picture follows
-  the device, and pacing spends latency to buy smoothness.
+- `Config::pace_video` asks the receiver itself to hold each frame back before calling
+  `push`. It is off by default: a mirror is judged by how quickly the picture follows the
+  device, and pacing spends latency to buy smoothness.
+- `VideoStream::set_pace(seconds)` is part of the boundary, but **the receiver does not call
+  it**: with `pace_video` on the receiver does the waiting, and with it off frames are pushed
+  at full speed and the backend's own backpressure decides the rate. A backend that
+  implements it for a caller driving the trait directly must use a cumulative deadline:
+  `due = previous_due + interval`, sleep only until `due`, and if `due` has passed re-anchor
+  at `now + interval`; sleeping `interval` after every frame accumulates drift. `0.0` means
+  do not wait. The default does nothing.
 
 ## Flushing, pausing, closing
 

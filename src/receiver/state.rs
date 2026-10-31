@@ -34,24 +34,30 @@ pub(super) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Frames a mirror session may hold for its renderer before it starts dropping them.
+/// Frames a playing mirror may hold for its renderer before the queue restarts.
 ///
 /// The queue exists so that waiting for a picture is not waiting inside the receive
 /// loop. It is bounded because a client that sends faster than a decoder decodes must
-/// not be able to make a receiver allocate without limit; a frame dropped when it is
-/// full is reported, because a dropped frame is one the rest of the stream may depend
-/// on. Thirty-two frames is about a second of a screen, which is longer than any
-/// stall a decoder produces and far below anything a receiver would notice holding.
+/// not be able to make a receiver allocate without limit. Eight frames is a fraction of
+/// a second at a normal mirror rate; an overflow is reported and waits for a key frame
+/// rather than trimming one frame out of the middle of a group.
 pub(super) const QUEUED_FRAMES: usize = 8;
 
-/// How many frames may wait while the video stream is still being opened.
+/// Above this many frames the startup backlog stops growing.
 ///
 /// The writer opens the stream on the first frame, and a decoder plus a window take a few
-/// hundred milliseconds. At sixty frames a second that is more than the steady-state depth,
-/// and dropping frames during a GOP is what makes the picture corrupt: every frame after the
-/// gap refers to a frame the decoder never saw. The queue is allowed to grow until the stream
-/// is open, and the backlog is written as fast as the renderer takes it.
-pub(super) const STARTUP_QUEUED_FRAMES: usize = 120;
+/// hundred milliseconds. The queue may grow while the stream is closed, but not without a
+/// bound. Thirty frames is one second at thirty frames a second, but the time window cuts the
+/// allowance at half a second first; the frame cap is there for a stream that arrives in a
+/// burst.
+pub(super) const STARTUP_QUEUED_FRAMES: usize = 30;
+
+/// How old the startup backlog may become before it is cut to a key frame.
+///
+/// Thirty frames and five hundred milliseconds are two limits on the same delay: whichever
+/// is reached first ends the startup allowance. A device that sends a burst should not make
+/// the viewer wait for the whole burst to drain.
+pub(super) const STARTUP_WINDOW_NANOS: u64 = 500_000_000;
 
 /// One frame waiting for the video writer.
 ///
@@ -67,16 +73,16 @@ pub(super) type QueuedVideo = (
     Option<crate::media::mirror::Geometry>,
 );
 
-/// Frames waiting for the renderer, where a full queue drops the **oldest**.
+/// Frames waiting for the renderer, with a bounded queue and a key-frame restart.
 ///
 /// A channel would be the obvious thing and it is wrong here. `SyncSender` refuses the
 /// newest frame when it is full, so the frames it already holds are the ones that stay
 /// queued — the renderer works through a picture that is a second old while the client
 /// keeps sending, and what grows is exactly how far behind the screen is.
 ///
-/// Dropping the oldest bounds the lag at the queue's depth instead. The picture cost is
-/// the same either way — a frame the rest of the stream depends on is gone — but the
-/// receiver no longer also drifts further behind the thing it is mirroring.
+/// This queue bounds both the depth and the age. On overflow it clears the group and waits
+/// for the next key frame; trimming one frame would leave every later P frame referring to a
+/// picture the decoder never saw.
 #[derive(Debug)]
 pub(super) struct FreshestFrames {
     state: Mutex<Frames>,
@@ -93,11 +99,19 @@ pub(super) struct Frames {
     dropped: u64,
     /// Bumped by a flush, so the writer knows the frames it was about to show are stale.
     pub(super) generation: u64,
-    /// Set once the queue has drained below the steady depth after the stream opened.
+    /// Set once the startup allowance has ended.
     ///
-    /// Before that it may grow, because the frames waiting for a pipeline to open are not an
-    /// overflow. Once past it, the strict depth applies for the rest of the session.
+    /// Before that the queue may grow, because the frames waiting for a pipeline to open are
+    /// not an overflow. Once past it, the strict depth applies for the rest of the session.
     steady: bool,
+    /// Set when a gap was created: frames are dropped until the next key frame.
+    ///
+    /// P frames refer to earlier frames by number, not by content, so once one is missing the
+    /// rest of that group cannot be decoded correctly. Dropping every frame until an IDR is a
+    /// short freeze; playing a group with a missing reference is a long, visibly broken picture.
+    damaged: bool,
+    /// Arrival time of the first startup frame, in the receiver's elapsed nanoseconds.
+    startup_started: Option<u64>,
 }
 
 impl FreshestFrames {
@@ -129,17 +143,14 @@ impl FreshestFrames {
         lock(&self.state).generation
     }
 
-    /// Adds a frame, keeping the queue at its depth once the stream is playing.
+    /// Adds a frame, keeping the queue bounded and waiting for a key frame after a gap.
     ///
     /// While the video stream is still opening the queue may grow to
-    /// [`STARTUP_QUEUED_FRAMES`]; after that it is allowed to drain back to
-    /// [`QUEUED_FRAMES`] before the strict depth applies again. Switching straight to the
-    /// strict depth would judge the frames that were waiting for the pipeline to open as an
-    /// overflow.
-    ///
-    /// Beyond the depth the oldest frame goes, because what the renderer should show is the
-    /// newest picture there is. That frame may be one a later frame refers to, which is why a
-    /// drop is reported: the picture can be damaged until the next key frame arrives.
+    /// [`STARTUP_QUEUED_FRAMES`] or [`STARTUP_WINDOW_NANOS`], whichever comes first. When the
+    /// stream opens and the backlog has drained below [`QUEUED_FRAMES`], the strict depth
+    /// applies. An overflow does not drop one frame: the whole queue is cleared and the
+    /// writer waits for the next key frame, because a P frame whose reference was dropped
+    /// cannot be decoded correctly.
     ///
     /// Returns how many are waiting afterwards and whether this call dropped a frame, so a
     /// caller can report a depth without asking a second question.
@@ -148,20 +159,45 @@ impl FreshestFrames {
         if state.ended {
             return (0, false);
         }
-        if opened && !state.steady && state.queued.len() < QUEUED_FRAMES {
-            state.steady = true;
-        }
-        let limit = if state.steady {
-            QUEUED_FRAMES
-        } else {
-            STARTUP_QUEUED_FRAMES
-        };
+
         let mut dropped = false;
-        if state.queued.len() >= limit {
-            state.queued.pop_front();
-            state.dropped += 1;
-            dropped = true;
+        if !state.steady {
+            let started = *state.startup_started.get_or_insert(frame.3);
+            let too_old = frame.3.saturating_sub(started) > STARTUP_WINDOW_NANOS;
+            if state.queued.len() >= STARTUP_QUEUED_FRAMES || too_old {
+                state.steady = true;
+                state.startup_started = None;
+                dropped = !state.queued.is_empty();
+                state.dropped += state.queued.len() as u64;
+                state.queued.clear();
+                state.damaged = true;
+            } else if opened && state.queued.len() < QUEUED_FRAMES {
+                state.steady = true;
+                state.startup_started = None;
+            }
         }
+
+        // A gap was created. Only a key frame can restart decoding cleanly.
+        if state.damaged {
+            if !frame.2 {
+                state.dropped += 1;
+                return (0, true);
+            }
+            state.damaged = false;
+        }
+
+        if state.steady && state.queued.len() >= QUEUED_FRAMES {
+            dropped = true;
+            state.dropped += state.queued.len() as u64;
+            state.queued.clear();
+            state.damaged = true;
+            if !frame.2 {
+                state.dropped += 1;
+                return (0, true);
+            }
+            state.damaged = false;
+        }
+
         state.queued.push_back(frame);
         let depth = state.queued.len();
         drop(state);
@@ -201,6 +237,11 @@ impl FreshestFrames {
     /// How many frames were dropped to keep the queue at its depth.
     pub(super) fn dropped(&self) -> u64 {
         lock(&self.state).dropped
+    }
+
+    /// How many frames are waiting for the writer.
+    pub(super) fn depth(&self) -> usize {
+        lock(&self.state).queued.len()
     }
 }
 

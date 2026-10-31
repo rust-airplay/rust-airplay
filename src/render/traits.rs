@@ -86,10 +86,18 @@ pub trait VideoStream: fmt::Debug + Send + Sync {
     /// one did until this existed.
     ///
     /// The value is the interval since the previous frame, which is the spacing the
-    /// stream has been arriving at. Called before a frame when [`crate::Config::pace_video`]
-    /// is off; when the receiver paces itself it does the waiting and does not call
-    /// this. The default does nothing, because a backend that decodes on its own
-    /// schedule (or plays nothing) has no use for it.
+    /// stream has been arriving at. A backend that implements pacing must keep a
+    /// **cumulative deadline**: add the interval to the previous deadline, sleep only
+    /// until that deadline, and if the deadline has already passed, re-anchor on the
+    /// current time instead of sleeping a fixed interval after every frame. Sleeping
+    /// `interval` after each frame accumulates the scheduling error, so a stream that
+    /// should be stable slowly falls behind.
+    ///
+    /// The receiver does not call this: when [`crate::Config::pace_video`] is off it
+    /// pushes frames at full speed and lets the backend's own backpressure decide the
+    /// rate; when it is on the receiver does the waiting itself. The method remains for
+    /// a caller that drives the trait directly. The default does nothing, because a
+    /// backend that decodes on its own schedule (or plays nothing) has no use for it.
     ///
     /// # Errors
     ///

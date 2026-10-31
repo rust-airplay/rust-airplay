@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- The mirror queue no longer drops only the oldest frame. An overflow clears the queued
+  group and delivery waits for the next key frame, because a P frame whose reference was
+  dropped cannot be decoded; the startup allowance is thirty frames or five hundred
+  milliseconds, whichever comes first.
+- The receiver no longer calls `VideoStream::set_pace` when `pace_video` is off: off now
+  means full speed and backend backpressure, not a delegated pace. The trait documents the
+  cumulative-deadline contract for a caller that uses it directly.
+- The mirror reporter now separates frames received from frames written, and includes queue
+  depth and dropped frames; the teardown line reports the same totals. A frame falling behind
+  is visible instead of looking like a healthy stream.
 - A second `SETUP` in one process starts a new media session: the audio loop follows the
   key and the clock target of the session that is current, so a reconnecting client is
   decrypted with its own key instead of the first session's. `TEARDOWN` releases the key,

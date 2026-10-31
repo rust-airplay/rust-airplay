@@ -155,6 +155,10 @@ impl MirrorTask {
             // because a channel does not say: it is the number that decides whether a
             // picture is being kept up with or dropped.
             let feed = std::sync::Arc::new(FreshestFrames::new());
+            // Frames actually handed to the renderer. The receiver also has a count of
+            // frames it received; keeping them apart is what makes a dropped frame visible.
+            let written = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let written_writer = std::sync::Arc::clone(&written);
             if let Ok(mut slot) = video_flush_task.lock() {
                 *slot = Some(Arc::clone(&feed));
             }
@@ -179,8 +183,6 @@ impl MirrorTask {
                     let mut paused = false;
                     // The interval between the last two frames is the stream's capture
                     // spacing; it is what a backend that paces itself needs to know.
-                    let mut previous_timestamp: Option<u64> = None;
-                    let mut pace_reported = false;
                     while let Some((data, timestamp, idr, received, codec, geometry)) =
                         queued.take()
                     {
@@ -281,29 +283,6 @@ impl MirrorTask {
                                 );
                             }
                         }
-                        // When the receiver is not pacing the stream itself, the backend
-                        // gets the spacing the stream is arriving at and can schedule its
-                        // own waits. The first frame has no interval to report.
-                        if !pace_video {
-                            if let Some(previous) = previous_timestamp {
-                                let ticks = timestamp.wrapping_sub(previous);
-                                let seconds = if ticks > u64::MAX / 2 {
-                                    0.0
-                                } else {
-                                    ticks as f64 / 4_294_967_296.0
-                                };
-                                if let Err(error) = video.set_pace(seconds) {
-                                    if !pace_reported {
-                                        pace_reported = true;
-                                        log::warn!(
-                                            "rust-airplay: the video stream would not take a pace: \
-                                             {error}"
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        previous_timestamp = Some(timestamp);
                         if let Err(error) = video.push(crate::VideoFrame {
                             data,
                             timestamp,
@@ -313,6 +292,7 @@ impl MirrorTask {
                             break;
                         }
                         shown += 1;
+                        written_writer.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     }
                     // A last frame already handed over is played out rather than cut
                     // off, which is what an end of stream means to a backend. A session
@@ -368,10 +348,12 @@ impl MirrorTask {
             let received_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             let watching = std::sync::Arc::clone(&received);
             let watching_bytes = std::sync::Arc::clone(&received_bytes);
-            // Frames that reached the renderer. The reporter reads a clone, so the count
-            // outlives the serving loop that fills it.
+            // Frames the receive loop turned into video, before the queue decides what
+            // survives. The reporter reads this and the writer's `written` apart.
             let frames_out = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             let watching_frames = std::sync::Arc::clone(&frames_out);
+            let watching_written = std::sync::Arc::clone(&written);
+            let watching_feed = std::sync::Arc::clone(&feed);
             // The census the session keeps is the one the reporter reads: it is shared
             // rather than copied, so there is one answer to what became of the packets.
             let watching_census = session.census();
@@ -379,20 +361,26 @@ impl MirrorTask {
             let recent_source = std::sync::Arc::clone(&watching_census);
             let watching_recent = move || recent_source.recent();
             let reporter = tokio::spawn(async move {
-                let mut last = (0u64, 0u64, 0u64);
+                let mut last = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     let now = (
                         watching.load(std::sync::atomic::Ordering::Relaxed),
                         watching_bytes.load(std::sync::atomic::Ordering::Relaxed),
                         watching_frames.load(std::sync::atomic::Ordering::Relaxed),
+                        watching_written.load(std::sync::atomic::Ordering::Relaxed),
+                        watching_feed.depth() as u64,
+                        watching_feed.dropped(),
                     );
                     if now != last {
                         log::info!(
-                            "media     mirror: {} packets, {} bytes in, {} frames out",
+                            "media     mirror: {} packets, {} bytes in, {} received, {} written, {} waiting, {} dropped",
                             now.0,
                             now.1,
-                            now.2
+                            now.2,
+                            now.3,
+                            now.4,
+                            now.5
                         );
                         // What became of the packets that were not frames. A stream
                         // that is arriving but producing nothing says which of the
@@ -527,10 +515,10 @@ impl MirrorTask {
                         }
                     }
                     // A full queue means the picture is behind what a client sent. The
-                    // oldest frame goes rather than the newest, so the lag stays at the
-                    // queue's depth instead of growing: what the renderer gets is always
-                    // the most recent frames there are. It is said once, because either
-                    // way a dropped frame is one the rest of the stream may depend on.
+                    // queue is cleared and delivery waits for the next key frame: a P
+                    // frame whose reference is gone cannot be decoded, so keeping the
+                    // newest frames would only hide the damage. The warning is said once;
+                    // the periodic reporter carries the written and dropped counts.
                     sent += 1;
                     let received = started.elapsed().as_nanos() as u64;
                     let opened = video_opened.load(std::sync::atomic::Ordering::Relaxed);
@@ -545,11 +533,11 @@ impl MirrorTask {
                     if refused == 0 && dropped {
                         refused = 1;
                         log::warn!(
-                            "rust-airplay: the renderer fell behind; the oldest frame was                              dropped and the picture may be damaged until the next key frame"
+                            "rust-airplay: the renderer fell behind; the queue was cleared and frames are dropped until the next key frame"
                         );
                     }
                     if sent % 200 == 0 {
-                        log::info!("media     {sent} video frames queued, {depth} waiting");
+                        log::info!("media     {sent} video frames received, {depth} waiting");
                     }
                 })
                 => result,
@@ -560,7 +548,8 @@ impl MirrorTask {
             {
                 match playing.join() {
                     Ok(shown) => log::info!(
-                        "media     {shown} video frames shown of {frames}, {} dropped to keep up",
+                        "media     mirror summary: {frames} received, {shown} written, {} waiting, {} dropped",
+                        feed.depth(),
                         feed.dropped()
                     ),
                     Err(_) => log::warn!("rust-airplay: the video thread ended unexpectedly"),

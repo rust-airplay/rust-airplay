@@ -76,7 +76,7 @@ rust_airplay::run(config).await?;
 | `trace_log` | `Option<PathBuf>` | 设置后把请求轨迹追加到这里 |
 | `dump_video` | `Option<PathBuf>` | 设置后把最初的视频帧以 Annex-B 追加到这里 |
 | `dump_audio` | `Option<PathBuf>` | 设置后把音频负载（前面带长度）追加到这里 |
-| `pace_video` | `bool` | 按采集间隔压住镜像视频。默认关闭：投屏看的是画面跟手的快慢 |
+| `pace_video` | `bool` | 让接收端按采集间隔压住镜像视频。默认关闭；关闭时全速推送，不调用 `set_pace` |
 | `audio_latency` | `Duration` | 客户端排程所用的延迟，写在 `RECORD` 的 `Audio-Latency`；默认 250 毫秒，最多 10 秒 |
 | `initial_volume` | `Volume` | 会话起始的线性增益；默认为 1.0 |
 | `volume_curve` | `VolumeCurve` | 客户端的 dB 如何变成该增益：平坦或锥形，`-30..0` 区间可重映射 |
@@ -117,7 +117,7 @@ pub trait AudioStream: Debug + Send + Sync {
 
 pub trait VideoStream: Debug + Send + Sync {
     fn push(&self, frame: VideoFrame) -> Result<(), RenderError>;
-    fn set_pace(&self, until_next_seconds: f64) -> Result<(), RenderError> { Ok(()) }
+    fn set_pace(&self, interval_seconds: f64) -> Result<(), RenderError> { Ok(()) }
     fn flush(&self) -> Result<(), RenderError>;
     fn pause(&self) -> Result<(), RenderError> { Ok(()) }
     fn resume(&self) -> Result<(), RenderError> { Ok(()) }

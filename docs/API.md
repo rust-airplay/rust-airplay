@@ -85,7 +85,7 @@ path decision and prints nothing; the only files it opens are the ones a caller 
 | `trace_log` | `Option<PathBuf>` | when set, request traces are appended here |
 | `dump_video` | `Option<PathBuf>` | when set, the first video frames are appended here as Annex-B |
 | `dump_audio` | `Option<PathBuf>` | when set, audio payloads are appended here behind a length |
-| `pace_video` | `bool` | hold mirror video to its capture spacing. Off by default; a mirror is judged by how quickly it follows the device |
+| `pace_video` | `bool` | let the receiver hold mirror video to its capture spacing. Off by default; when off frames are pushed at full speed and `set_pace` is not called |
 | `audio_latency` | `Duration` | the delay a client schedules against, in `Audio-Latency` on `RECORD`; 250 ms by default, at most ten seconds |
 | `initial_volume` | `Volume` | the linear gain a session starts at; unity by default |
 | `volume_curve` | `VolumeCurve` | how a client's decibels become that gain: flat or tapered, with the `-30..0` range rescaled |
@@ -128,7 +128,7 @@ pub trait AudioStream: Debug + Send + Sync {
 
 pub trait VideoStream: Debug + Send + Sync {
     fn push(&self, frame: VideoFrame) -> Result<(), RenderError>;
-    fn set_pace(&self, until_next_seconds: f64) -> Result<(), RenderError> { Ok(()) }
+    fn set_pace(&self, interval_seconds: f64) -> Result<(), RenderError> { Ok(()) }
     fn flush(&self) -> Result<(), RenderError>;
     fn pause(&self) -> Result<(), RenderError> { Ok(()) }
     fn resume(&self) -> Result<(), RenderError> { Ok(()) }

@@ -176,6 +176,10 @@ pub struct Config {
     /// and pacing spends latency to buy smoothness: writing each frame as it arrives shows
     /// the newest picture at the cost of an uneven one when a burst arrives. Turn it on for
     /// a stream that arrives in bursts and a viewer who watches rather than types.
+    ///
+    /// This is the receiver's own pacing decision. When off, it pushes frames at full
+    /// speed and does not ask the backend to pace them; [`crate::VideoStream::set_pace`]
+    /// is not called.
     pub pace_video: bool,
 }
 

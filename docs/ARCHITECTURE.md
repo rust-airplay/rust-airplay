@@ -148,16 +148,16 @@ and `pace_video` trades that for even spacing when someone wants it.
 Frames cross a trait boundary as owned buffers with a timestamp. The receive loop must never
 wait for a renderer, so each stream is written from its own thread, fed by a queue.
 
-A video queue has two depths. While the stream is still opening - the writer starts the
+A video queue has two phases. While the stream is still opening - the writer starts the
 pipeline on the first frame, and a decoder and a window take a few hundred milliseconds - the
-queue may grow to a hundred and twenty frames, because a quarter of a second of unsent frames
-is not an overflow and dropping them during a group of pictures leaves the decoder referring
-to pictures it never saw. Once the stream plays and the backlog has drained, the queue keeps
-eight frames: a frame that does not fit means the renderer is behind, the oldest goes, and the
-log says the picture may be damaged until the next key frame. Both numbers exist because the
-opposite choices both had a visible failure: dropping during the opening burst corrupted the
-picture, and switching to the steady depth while the opening backlog was still queued emptied
-it and waited for a key frame a client never sends.
+queue may grow to the smaller of thirty frames or five hundred milliseconds, whichever comes
+first. That is enough for the opening burst without adding a second of latency to a mirror.
+Once the stream plays and the backlog has drained below eight frames, the steady depth is
+eight. An overflow does not trim one frame: the whole queue is cleared and delivery waits for
+the next key frame, because a P frame whose reference was dropped decodes incorrectly until
+an IDR arrives. A short freeze is visible; a group of pictures referring to a missing frame is
+a long, corrupted picture. The periodic log carries packets in, frames received, frames
+written, queue depth and frames dropped, so a queue that is falling behind is visible.
 
 Audio has a queue of its own for the same reason, with a much smaller depth: a coded audio
 frame is a few hundred bytes, and its timestamps are what a renderer paces against.
