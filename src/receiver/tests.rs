@@ -2,7 +2,9 @@
 //! Tests for the receiver's internal helpers.
 
 use super::runtime::{ClockProbe, client_gain, describe_report};
-use super::state::{FreshestFrames, QUEUED_FRAMES, QueuedVideo, STARTUP_QUEUED_FRAMES};
+use super::state::{
+    DAMAGED_TIMEOUT_NANOS, FreshestFrames, QUEUED_FRAMES, QueuedVideo, STARTUP_QUEUED_FRAMES,
+};
 
 #[test]
 fn a_streaming_report_is_written_out_as_xml() {
@@ -105,8 +107,8 @@ fn a_startup_backlog_is_measured_in_time_too() {
     let queue = FreshestFrames::new();
     assert!(!queue.put(frame_with(0, true, 0), false).1);
     assert!(!queue.put(frame_with(1, true, 100_000_000), false).1);
-    // Five hundred milliseconds is the other half of the startup allowance.
-    let (depth, dropped) = queue.put(frame_with(2, true, 600_000_000), false);
+    // Two seconds is the other half of the startup allowance.
+    let (depth, dropped) = queue.put(frame_with(2, true, 2_100_000_000), false);
     assert!(dropped);
     assert_eq!(depth, 1);
     assert_eq!(queue.dropped(), 2);
@@ -138,6 +140,33 @@ fn an_overflow_waits_for_a_key_frame() {
     assert!(!dropped);
     assert_eq!(depth, 1, "an IDR restarts delivery");
     assert_eq!(queue.try_take().expect("the key frame").1, 10);
+}
+
+#[test]
+fn a_damaged_stream_resumes_when_no_key_frame_arrives() {
+    // A client sends a key frame when its picture changes, so a mostly still screen can
+    // go a whole session without one. Waiting forever after a single overflow froze the
+    // picture for the rest of the session - a real session stopped at 208 written frames
+    // with everything after it dropped.
+    let queue = FreshestFrames::new();
+    for timestamp in 0..QUEUED_FRAMES as u64 {
+        let (_, dropped) = queue.put(frame_with(timestamp, true, 0), true);
+        assert!(!dropped);
+    }
+    let (depth, dropped) = queue.put(frame_with(8, false, 0), true);
+    assert!(dropped, "the overflow clears the group");
+    assert_eq!(depth, 0, "a P frame cannot restart a cleared group");
+
+    // Inside the wait a P frame is still dropped.
+    let (depth, _) = queue.put(frame_with(9, false, DAMAGED_TIMEOUT_NANOS / 2), true);
+    assert_eq!(depth, 0, "still waiting for the key frame");
+
+    // Past it the next frame is shown, damaged or not, and a natural key frame repairs
+    // the picture later instead of the session ending here.
+    let (depth, dropped) = queue.put(frame_with(10, false, DAMAGED_TIMEOUT_NANOS + 1), true);
+    assert!(!dropped, "the frame that resumes the picture is not a drop");
+    assert_eq!(depth, 1, "the picture moves again");
+    assert_eq!(queue.try_take().expect("the frame").1, 10);
 }
 
 #[test]

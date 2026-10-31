@@ -50,14 +50,22 @@ pub(super) const QUEUED_FRAMES: usize = 8;
 /// bound. Thirty frames is one second at thirty frames a second, but the time window cuts the
 /// allowance at half a second first; the frame cap is there for a stream that arrives in a
 /// burst.
-pub(super) const STARTUP_QUEUED_FRAMES: usize = 30;
+pub(super) const STARTUP_QUEUED_FRAMES: usize = 120;
 
 /// How old the startup backlog may become before it is cut to a key frame.
 ///
 /// Thirty frames and five hundred milliseconds are two limits on the same delay: whichever
 /// is reached first ends the startup allowance. A device that sends a burst should not make
 /// the viewer wait for the whole burst to drain.
-pub(super) const STARTUP_WINDOW_NANOS: u64 = 500_000_000;
+pub(super) const STARTUP_WINDOW_NANOS: u64 = 2_000_000_000;
+
+/// How long a damaged stream waits for a key frame before it resumes without one.
+///
+/// A client sends a key frame when its picture changes; a mostly still screen can go a
+/// whole session without one. Waiting forever turns a single overflow into a frozen
+/// picture, which is worse than the damage the wait was avoiding, so the wait is bounded:
+/// past this the next frame is shown, and a natural key frame repairs the picture later.
+pub(super) const DAMAGED_TIMEOUT_NANOS: u64 = 1_000_000_000;
 
 /// One frame waiting for the video writer.
 ///
@@ -110,6 +118,8 @@ pub(super) struct Frames {
     /// rest of that group cannot be decoded correctly. Dropping every frame until an IDR is a
     /// short freeze; playing a group with a missing reference is a long, visibly broken picture.
     damaged: bool,
+    /// When the stream went damaged, in the receiver's elapsed nanoseconds.
+    damaged_at: Option<u64>,
     /// Arrival time of the first startup frame, in the receiver's elapsed nanoseconds.
     startup_started: Option<u64>,
 }
@@ -171,19 +181,31 @@ impl FreshestFrames {
                 state.dropped += state.queued.len() as u64;
                 state.queued.clear();
                 state.damaged = true;
+                state.damaged_at = Some(frame.3);
             } else if opened && state.queued.len() < QUEUED_FRAMES {
                 state.steady = true;
                 state.startup_started = None;
             }
         }
 
-        // A gap was created. Only a key frame can restart decoding cleanly.
+        // A gap was created. Only a key frame can restart decoding cleanly - but a client
+        // that never sends one must not freeze the picture for the rest of the session, so
+        // the wait has a deadline and the stream resumes without it.
         if state.damaged {
-            if !frame.2 {
+            let since = *state.damaged_at.get_or_insert(frame.3);
+            if !frame.2 && frame.3.saturating_sub(since) < DAMAGED_TIMEOUT_NANOS {
                 state.dropped += 1;
                 return (0, true);
             }
+            let resumed = !frame.2;
             state.damaged = false;
+            state.damaged_at = None;
+            if resumed {
+                log::warn!(
+                    "rust-airplay: no key frame within {} ms; resuming without one",
+                    DAMAGED_TIMEOUT_NANOS / 1_000_000
+                );
+            }
         }
 
         if state.steady && state.queued.len() >= QUEUED_FRAMES {
@@ -191,11 +213,13 @@ impl FreshestFrames {
             state.dropped += state.queued.len() as u64;
             state.queued.clear();
             state.damaged = true;
+            state.damaged_at = Some(frame.3);
             if !frame.2 {
                 state.dropped += 1;
                 return (0, true);
             }
             state.damaged = false;
+            state.damaged_at = None;
         }
 
         state.queued.push_back(frame);
