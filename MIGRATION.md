@@ -55,7 +55,8 @@ resolving dependencies - it is not a code problem.
 
 ## The 0.3.0 release
 
-`0.3.0` is the release after `0.2.0`. It is a breaking pre-1.0 step, not a patch:
+`0.3.0` is the release after `0.2.0`. It is a breaking pre-1.0 step, not a patch; `0.3.1`
+is a patch on top of it (mirror queue and pacing fixes) with no public API change:
 
 - `Config`, `ServerConfig`, `SetupRequest`, the codec enums, `RenderError`, `PinMode` and
   `SessionAuth` are `#[non_exhaustive]`. Construct the configuration types through

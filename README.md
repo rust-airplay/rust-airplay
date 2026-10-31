@@ -98,8 +98,8 @@ documentation on [docs.rs](https://docs.rs/rust-airplay).
 
 ## Status
 
-Version 0.3.0. The 0.2.0 release is the previous one; the changes that made this a minor
-version, including the public API changes, are in the changelog.
+Version 0.3.1. The 0.3.0 release is the previous one; this patch fixes the mirror
+queue and the pacing contract, and the changes are in the changelog.
 
 The protocol path is exercised by real-socket integration tests, property tests and synthetic
 packet vectors. A real-device matrix (iPhone/iPadOS/macOS, AirPlay 1 and 2, pairing, mirroring

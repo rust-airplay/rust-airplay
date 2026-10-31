@@ -238,8 +238,9 @@ legitimate choice.
 
 ## Versioning
 
-Version 0.3.0. The 0.2.0 release is the previous one; the public API changes that made this
-a minor version are in the changelog. Version 1.0 is the point where the API is frozen.
+Version 0.3.1. The 0.3.0 release is the previous one; this patch fixes the mirror queue and
+the pacing contract, and the changes are in the changelog. Version 1.0 is the point where the
+API is frozen.
 
 Growth-prone public types - `Config`, `ServerConfig`, `SetupRequest`, the codec enums,
 `RenderError`, `PinMode` and `SessionAuth` - are `#[non_exhaustive]`: construct them through

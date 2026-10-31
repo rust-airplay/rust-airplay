@@ -43,7 +43,8 @@ rust-airplay = { git = "https://github.com/rust-airplay/rust-airplay", branch = 
 
 ## 0.3.0 发布
 
-`0.3.0` 是 `0.2.0` 之后的版本。它是 1.0 之前的一次破坏性步骤，而不是补丁版：
+`0.3.0` 是 `0.2.0` 之后的版本。它是 1.0 之前的一次破坏性步骤，而不是补丁版；`0.3.1` 是其上的
+补丁（镜像队列与节拍修复），公开 API 不变：
 
 - `Config`、`ServerConfig`、`SetupRequest`、编码枚举、`RenderError`、`PinMode` 与 `SessionAuth`
   都标了 `#[non_exhaustive]`。配置类型通过 `Config::new` 或 `ServerConfig::default` 构造，匹配

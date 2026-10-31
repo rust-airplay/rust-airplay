@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0
+## 0.3.1
 
 ### Fixed
 
@@ -14,6 +14,11 @@
 - The mirror reporter now separates frames received from frames written, and includes queue
   depth and dropped frames; the teardown line reports the same totals. A frame falling behind
   is visible instead of looking like a healthy stream.
+
+## 0.3.0
+
+### Fixed
+
 - A second `SETUP` in one process starts a new media session: the audio loop follows the
   key and the clock target of the session that is current, so a reconnecting client is
   decrypted with its own key instead of the first session's. `TEARDOWN` releases the key,
